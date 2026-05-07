@@ -86,7 +86,6 @@ def analyze(symbol, funds, risk, is_risky=False):
         "Sizing": f"{shares} Shrs", "Stop": f"${(price - stop_dist):.2f}",
         "Action": status
     }
-
 # --- 🖥️ UI ---
 if check_password():
     st.title("🐋 Institutional Wealth Terminal 2026")
@@ -96,10 +95,38 @@ if check_password():
         risk = st.slider("Risk Per Trade (%)", 0.5, 3.0, 1.5) / 100
         core = st.text_input("Core Holdings", "NVDA,AVGO,MSFT,REGN")
         risk_list = st.text_input("Incubator", "CIFR,NBIS,IONQ,RGTI")
+        refresh = st.button("♻️ Refresh Data")
 
-    if st.button("♻️ Refresh Data"):
+    # Clean the ticker list
+    all_t = [t.strip().upper() for t in (core + "," + risk_list).split(",") if t]
+
+    # --- DATA FETCHING ---
+    if refresh or "market_data" not in st.session_state:
         st.cache_data.clear()
-        all_t = [t.strip().upper() for t in (core + "," + risk_list).split(",") if t]
-        data = [analyze(t, funds, risk, t in risk_list.upper()) for t in all_t]
-        st.subheader("📋 Market Execution Dashboard")
-        st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
+        with st.spinner("Analyzing Portfolio..."):
+            # 1. Dashboard Table
+            raw_results = [analyze(t, funds, risk, t in risk_list.upper()) for t in all_t]
+            st.session_state.market_data = pd.DataFrame(raw_results)
+           
+            # 2. Heatmap Data (Price Correlation)
+            # Fetch last 6 months of close prices for all tickers
+            price_data = yf.download(all_t, period="6mo", progress=False)['Close']
+            st.session_state.corr_matrix = price_data.corr()
+
+    # --- DISPLAY 1: DASHBOARD ---
+    st.subheader("📋 Market Execution Dashboard")
+    if "market_data" in st.session_state:
+        st.dataframe(st.session_state.market_data, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- DISPLAY 2: HEATMAP ---
+    st.subheader("🔥 Risk Correlation Heatmap")
+    st.caption("A score of 1.0 means stocks move perfectly together. Aim for diversity!")
+   
+    if "corr_matrix" in st.session_state:
+        # We use a styled dataframe to create the heatmap effect
+        st.dataframe(
+            st.session_state.corr_matrix.style.background_gradient(cmap='RdYlGn', axis=None).format("{:.2f}"),
+            use_container_width=True
+        )
