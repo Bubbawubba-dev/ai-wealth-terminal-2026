@@ -69,7 +69,8 @@ def analyze_stock(symbol, df, info, funds, risk):
         score = 0
         if not pd.isna(curr['SMA200']) and price > curr['SMA200']: score += 4
         if rvol > 1.8: score += 4
-        if 45 < rsi < 68: score += 2
+        if 35 < rsi < 55: score += 3
+        elif rsi > 65: score -= 2
        
         status = "🟡 MONITOR"
         if score >= 8: status = "🔥 BUY"
