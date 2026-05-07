@@ -115,10 +115,13 @@ if check_password():
                 if res: results.append(res)
            
             st.session_state.results = pd.DataFrame(results)
-            # Heatmap Logic
-            price_data = yf.download(tickers, period="6mo", progress=False)['Close']
-            st.session_state.corr = price_data.corr()
-
+       st.subheader("🔥 Risk Correlation Heatmap")
+if "corr" in st.session_state:
+    # This creates a beautiful heatmap using just Pandas and Streamlit
+    st.dataframe(
+        st.session_state.corr.style.background_gradient(cmap='RdYlGn', axis=None).format("{:.2f}"),
+        use_container_width=True
+    )
     # --- DISPLAYS ---
     col1, col2 = st.columns([2, 1])
    
