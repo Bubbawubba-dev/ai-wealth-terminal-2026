@@ -105,13 +105,25 @@ if check_password():
         st.cache_data.clear()
         with st.spinner("Analyzing Portfolio..."):
             # 1. Dashboard Table
+            all_t = [t.strip().upper() for t in (core + "," + risk_list).split(",") if t]
             raw_results = [analyze(t, funds, risk, t in risk_list.upper()) for t in all_t]
             st.session_state.market_data = pd.DataFrame(raw_results)
            
-            # 2. Heatmap Data (Price Correlation)
-            # Fetch last 6 months of close prices for all tickers
-            price_data = yf.download(all_t, period="6mo", progress=False)['Close']
-            st.session_state.corr_matrix = price_data.corr()
+            # 2. SAFE HEATMAP DATA
+            try:
+                # Get close prices
+                df_heat = yf.download(all_t, period="6mo", progress=False)['Close']
+               
+                # Fix for Yahoo Finance's new multi-index format
+                if isinstance(df_heat.columns, pd.MultiIndex):
+                    df_heat.columns = df_heat.columns.get_level_values(0)
+               
+                # Remove any stocks that didn't load (NaN columns)
+                df_heat = df_heat.dropna(axis=1, how='all')
+               
+                st.session_state.corr_matrix = df_heat.corr()
+            except Exception as e:
+                st.error(f"Correlation Error: {e}")
 
     # --- DISPLAY 1: DASHBOARD ---
     st.subheader("📋 Market Execution Dashboard")
