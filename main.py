@@ -37,7 +37,8 @@ def check_password():
 # --- 🧠 ANALYTICS ENGINE (Rulebook Logic) ---
 def analyze_stock(symbol, df, funds, risk):
     try:
-        if df.empty or len(df) < 200: return None
+        if df.empty or len(df) < 200:
+            return None
        
         # 1. Indicators
         df['SMA50'] = df['Close'].rolling(50).mean()
@@ -67,12 +68,15 @@ def analyze_stock(symbol, df, funds, risk):
 
         # 4. Action Triggers
         status = "🟡 MONITOR"
-        if score >= 8 and rvol > 1.8: status = "🔥 CAN SLIM BUY"
-        elif is_stage_2 and curr['RSI'] < 35: status = "💎 MINERVINI DIP"
-        elif rvol < 1.0 and price > df['High'].shift(1).iloc[-1]: status = "⚠️ FAKEOUT"
+        if score >= 8 and rvol > 1.8:
+            status = "🔥 CAN SLIM BUY"
+        elif is_stage_2 and curr['RSI'] < 35:
+            status = "💎 MINERVINI DIP"
+        elif rvol < 1.0 and price > df['High'].shift(1).iloc[-1]:
+            status = "⚠️ FAKEOUT"
        
         shares = int((funds * risk) / (curr['ATR'] * 2)) if curr['ATR'] > 0 else 0
-        news_url = f"https://yahoo.com{symbol}"
+        news_url = f"https://finance.yahoo.com/quote/{symbol}"
 
         return {
             "Ticker": symbol,
@@ -85,7 +89,8 @@ def analyze_stock(symbol, df, funds, risk):
             "Sizing": f"{shares} Shrs",
             "News": news_url
         }
-    except: return None
+    except:
+        return None
 
 # --- 🖥️ UI ---
 if check_password():
@@ -103,7 +108,6 @@ if check_password():
         else:
             current_tickers = get_hot_picks()
 
-        # 🔥 CHANGE DETECTION: If tickers change, clear the old results automatically
         if "last_tickers" not in st.session_state:
             st.session_state.last_tickers = []
            
@@ -114,25 +118,21 @@ if check_password():
 
         run = st.button("🚀 EXECUTE SCAN")
 
-    # --- 🛠️ DATA PROCESSING (FIXED) ---
+    # --- 🛠️ DATA PROCESSING ---
     if run or ("results" not in st.session_state and current_tickers):
         with st.spinner(f"Analyzing {len(current_tickers)} Assets..."):
             try:
-                # 1. Fetch Bulk Data
                 bulk_df = yf.download(current_tickers, period="1y", group_by='ticker', progress=False)
                
-                # 2. Analyze Tickers
                 res_list = []
                 for t in current_tickers:
-                    # Fix for single vs multiple ticker dataframes
                     df = bulk_df[t] if len(current_tickers) > 1 else bulk_df
                     analysis = analyze_stock(t, df, funds, risk)
-                    if analysis: res_list.append(analysis)
+                    if analysis:
+                        res_list.append(analysis)
                
-                # 3. Save to Session State (Persists across reruns)
                 st.session_state.results = pd.DataFrame(res_list)
                
-                # 4. Correlation Data
                 hp_df = yf.download(current_tickers, period="6mo", progress=False)['Close']
                 if isinstance(hp_df.columns, pd.MultiIndex):
                     hp_df.columns = hp_df.columns.get_level_values(0)
@@ -143,13 +143,11 @@ if check_password():
 
     # --- 📊 DISPLAY ---
     if "results" in st.session_state and not st.session_state.results.empty:
-        # Metrics
         c1, c2, c3 = st.columns(3)
         c1.metric("Assets Analyzed", len(current_tickers))
         c2.metric("Market Sentiment", "🐂 BULL" if st.session_state.results['RSI'].mean() < 70 else "🛑 HOT")
         c3.metric("Terminal Time", datetime.now().strftime("%H:%M"))
 
-        # Table
         st.subheader("📋 Market Execution Dashboard")
         st.dataframe(
             st.session_state.results,
@@ -161,6 +159,9 @@ if check_password():
         st.divider()
         st.subheader("🔥 Risk Correlation")
         if "corr" in st.session_state:
-            st.dataframe(st.session_state.corr.style.background_gradient(cmap='RdYlGn', axis=None).format("{:.2f}"), use_container_width=True)
+            st.dataframe(
+                st.session_state.corr.style.background_gradient(cmap='RdYlGn', axis=None).format("{:.2f}"),
+                use_container_width=True
+            )
     else:
         st.info("💡 Enter tickers and click 'EXECUTE SCAN' to populate the dashboard.")
