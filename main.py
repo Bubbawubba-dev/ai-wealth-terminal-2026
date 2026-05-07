@@ -6,19 +6,24 @@ import requests
 import time
 
 # --- 🛡️ SECURITY ---
+# This version pulls exclusively from your Streamlit Secrets box
 def check_password():
     if "password_correct" not in st.session_state:
         st.sidebar.title("🔐 Terminal Access")
         pwd = st.sidebar.text_input("Access Key", type="password")
         if st.sidebar.button("Unlock"):
-            if pwd == st.secrets.get("APP_PASSWORD", "1234"):
+            # NO hardcoded password here. It MUST be in the Secrets box.
+            if pwd == st.secrets["APP_PASSWORD"]:
                 st.session_state["password_correct"] = True
                 st.rerun()
+            else:
+                st.sidebar.error("❌ Invalid Key")
         return False
     return True
 
 # --- 📡 NOTIFICATIONS ---
 def send_telegram(msg):
+    # Safely fetch tokens from the vault
     token = st.secrets.get("TELEGRAM_TOKEN")
     chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
     if token and chat_id:
@@ -47,20 +52,17 @@ def analyze(symbol, funds, risk, is_risky=False):
     if df is None:
         return {"Ticker": symbol, "Action": "❌ ERROR"}
 
-    # --- MANUAL MATH (No pandas_ta needed) ---
+    # Manual Math for Cloud Stability
     df['SMA200'] = df['Close'].rolling(window=200).mean()
-   
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
-   
     df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
 
     curr = df.iloc[-1]
     price, rsi, sma200, atr = curr['Close'], curr['RSI'], curr['SMA200'], curr['ATR']
-
     rvol = curr['Volume'] / df['Volume'].tail(20).mean()
     usd_vol = (curr['Volume'] * price) / 1_000_000
 
