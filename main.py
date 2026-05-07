@@ -52,48 +52,7 @@ def analyze_stock(symbol, df, funds, risk):
         price = curr['Close']
         high_52w = df['High'].tail(252).max()
         rvol = curr['Volume'] / df['Volume'].tail(20).mean()
-
-        # -----------------------------------------
-# 🎯 ENTRY & EXIT POINTS FOR SELECTED SYMBOLS
-# -----------------------------------------
-
-def calculate_entry_exit(df):
-    """
-    df must contain: Close, SMA50, SMA200, ATR
-    Returns entry_price, exit_price
-    """
-
-    close = df['Close'].iloc[-1]
-    sma50 = df['SMA50'].iloc[-1]
-    sma200 = df['SMA200'].iloc[-1]
-    atr = df['ATR'].iloc[-1]
-
-    # -------------------------
-    # ENTRY LOGIC
-    # -------------------------
-    # Entry when price breaks above SMA50 AND SMA50 > SMA200 (trend alignment)
-    if close > sma50 and sma50 > sma200:
-        entry_price = close
-    else:
-        entry_price = None
-
-    # -------------------------
-    # EXIT LOGIC
-    # -------------------------
-    # ATR stop-loss: 2 × ATR below close
-    atr_stop = close - 2 * atr
-
-    # Trend exit: price closes below SMA50
-    trend_exit = sma50 if close < sma50 else None
-
-    # Choose the earliest exit trigger
-    if trend_exit:
-        exit_price = trend_exit
-    else:
-        exit_price = atr_stop
-
-    return entry_price, exit_price
-
+       
         # 2. Rulebook Checks (Minervini & O'Neil)
         is_stage_2 = price > df['SMA50'].iloc[-1] > df['SMA200'].iloc[-1]
         near_highs = (price / high_52w) > 0.90
