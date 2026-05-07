@@ -95,41 +95,72 @@ if check_password():
         st.header("🕹️ Strategy Parameters")
         funds = st.number_input("Portfolio Balance ($)", value=100000)
         risk = st.slider("Risk Per Trade (%)", 0.5, 3.0, 1.5) / 100
-        mode = st.radio("Scanner Mode", ["My Watchlist", "Live Hot Picks 🔥"])
+        mode = st.radio("Scanner Mode", ["My Watchlist", "Momentum Hot Picks 🔥"])
        
         if mode == "My Watchlist":
-            user_input = st.text_area("Tickers", "NVDA,AAPL,TSLA,AMD,MSFT")
-            t_list = [t.strip().upper() for t in user_input.split(",") if t]
+            user_input = st.text_area("Symbols", "NVDA,AAPL,TSLA,AMD")
+            current_tickers = [t.strip().upper() for t in user_input.split(",") if t]
         else:
-            t_list = get_hot_picks()
-            st.info(f"Loaded {len(t_list)} active movers.")
-       
+            current_tickers = get_hot_picks()
+
+        # 🔥 CHANGE DETECTION: If tickers change, clear the old results automatically
+        if "last_tickers" not in st.session_state:
+            st.session_state.last_tickers = []
+           
+        if current_tickers != st.session_state.last_tickers:
+            if "results" in st.session_state:
+                del st.session_state.results
+            st.session_state.last_tickers = current_tickers
+
         run = st.button("🚀 EXECUTE SCAN")
 
-    if run or "results" not in st.session_state:
-        with st.spinner("Processing High-Frequency Data..."):
-            bulk_df = yf.download(t_list, period="1y", group_by='ticker', progress=False)
-            res_list = [analyze_stock(t, bulk_df[t] if len(t_list)>1 else bulk_df, funds, risk) for t in t_list]
-            st.session_state.results = pd.DataFrame([r for r in res_list if r])
-           
-            # Clean Heatmap Data
-            hp_df = yf.download(t_list, period="6mo", progress=False)['Close']
-            if isinstance(hp_df.columns, pd.MultiIndex): hp_df.columns = hp_df.columns.get_level_values(0)
-            st.session_state.corr = hp_df.dropna(axis=1, how='all').corr()
+    # --- 🛠️ DATA PROCESSING (FIXED) ---
+    if run or ("results" not in st.session_state and current_tickers):
+        with st.spinner(f"Analyzing {len(current_tickers)} Assets..."):
+            try:
+                # 1. Fetch Bulk Data
+                bulk_df = yf.download(current_tickers, period="1y", group_by='ticker', progress=False)
+               
+                # 2. Analyze Tickers
+                res_list = []
+                for t in current_tickers:
+                    # Fix for single vs multiple ticker dataframes
+                    df = bulk_df[t] if len(current_tickers) > 1 else bulk_df
+                    analysis = analyze_stock(t, df, funds, risk)
+                    if analysis: res_list.append(analysis)
+               
+                # 3. Save to Session State (Persists across reruns)
+                st.session_state.results = pd.DataFrame(res_list)
+               
+                # 4. Correlation Data
+                hp_df = yf.download(current_tickers, period="6mo", progress=False)['Close']
+                if isinstance(hp_df.columns, pd.MultiIndex):
+                    hp_df.columns = hp_df.columns.get_level_values(0)
+                st.session_state.corr = hp_df.dropna(axis=1, how='all').corr()
+               
+            except Exception as e:
+                st.error(f"Execution Error: {e}")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Assets Analyzed", len(t_list))
-    c2.metric("Market Sentiment", "🐂 BULL" if not st.session_state.results.empty and st.session_state.results['RSI'].mean() < 70 else "🛑 HOT")
-    c3.metric("Terminal Time", datetime.now().strftime("%H:%M"))
+    # --- 📊 DISPLAY ---
+    if "results" in st.session_state and not st.session_state.results.empty:
+        # Metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Assets Analyzed", len(current_tickers))
+        c2.metric("Market Sentiment", "🐂 BULL" if st.session_state.results['RSI'].mean() < 70 else "🛑 HOT")
+        c3.metric("Terminal Time", datetime.now().strftime("%H:%M"))
 
-    st.subheader("📋 Market Execution Dashboard")
-    st.dataframe(
-        st.session_state.results,
-        use_container_width=True,
-        hide_index=True,
-        column_config={"News": st.column_config.LinkColumn("Research Link")}
-    )
-   
-    st.divider()
-    st.subheader("🔥 Risk Correlation (Diversity Check)")
-    st.dataframe(st.session_state.corr.style.background_gradient(cmap='RdYlGn', axis=None).format("{:.2f}"), use_container_width=True)
+        # Table
+        st.subheader("📋 Market Execution Dashboard")
+        st.dataframe(
+            st.session_state.results,
+            use_container_width=True,
+            hide_index=True,
+            column_config={"News": st.column_config.LinkColumn("Research Link")}
+        )
+       
+        st.divider()
+        st.subheader("🔥 Risk Correlation")
+        if "corr" in st.session_state:
+            st.dataframe(st.session_state.corr.style.background_gradient(cmap='RdYlGn', axis=None).format("{:.2f}"), use_container_width=True)
+    else:
+        st.info("💡 Enter tickers and click 'EXECUTE SCAN' to populate the dashboard.")
