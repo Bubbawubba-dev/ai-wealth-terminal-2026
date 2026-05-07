@@ -44,17 +44,42 @@ def analyze_stock(symbol, df, funds, risk):
         price, rsi, sma200, atr = curr['Close'], curr['RSI'], curr['SMA200'], curr['ATR']
         rvol = curr['Volume'] / df['Volume'].tail(20).mean()
 
+        # --- 🛡️ ANTI-FAKEOUT LOGIC ---
+        score = 0
         status = "🟡 HOLD"
-        if price > sma200 and rsi < 35: status = "💎 BUY DIP"
-        elif rvol > 2.5 and rsi < 70: status = "🔥 BREAKOUT"
-        elif rsi > 78: status = "🛑 EXIT"
+       
+        # 1. Trend Strength (Regime)
+        if price > sma200: score += 3
+       
+        # 2. Volume Conviction (The Fakeout Killer)
+        if rvol > 2.0: score += 4
+        elif rvol > 1.2: score += 2
+       
+        # 3. Momentum Room (RSI)
+        if 50 < rsi < 68: score += 3  # Sweet spot for new breakouts
+        elif rsi > 75: score -= 2     # Deduct points for being overextended
+
+        # --- ACTION TRIGGERS ---
+        if score >= 8 and rvol > 2.0:
+            status = "🔥 STRONG BREAKOUT"
+        elif score >= 6 and rsi < 35:
+            status = "💎 BUY DIP"
+        elif rsi > 80:
+            status = "🛑 TAKE PROFIT"
+        elif rvol < 1.0 and price > df['High'].shift(1).iloc[-1]:
+            status = "⚠️ FAKEOUT RISK" # Price up, but no one is buying
 
         stop_dist = (atr * 2)
         shares = int((funds * risk) / stop_dist) if stop_dist > 0 else 0
 
         return {
-            "Ticker": symbol, "Price": f"${price:.2f}", "RSI": round(rsi, 1),
-            "RVOL": f"{rvol:.1f}x", "Sizing": f"{shares} Shrs", "Action": status
+            "Ticker": symbol,
+            "Price": f"${price:.2f}",
+            "Score": f"{score}/10",
+            "RVOL": f"{rvol:.1f}x",
+            "RSI": round(rsi, 1),
+            "Action": status,
+            "Sizing": f"{shares} Shrs"
         }
     except:
         return None
