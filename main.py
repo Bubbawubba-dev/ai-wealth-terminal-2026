@@ -52,6 +52,36 @@ def analyze(symbol, funds, risk, is_risky=False):
     if df is None:
         return {"Ticker": symbol, "Action": "❌ ERROR"}
 
+    # --- 1. Get Forward P/E from the 'info' dictionary ---
+    # We use .get() so the app doesn't crash if the P/E is missing (like for crypto)
+    fwd_pe = info.get('forwardPE', 'N/A')
+    if isinstance(fwd_pe, (int, float)):
+        fwd_pe = f"{fwd_pe:.1f}"
+
+    # --- 2. Indicators ---
+    df['SMA200'] = df['Close'].rolling(window=200).mean()
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
+
+    curr = df.iloc[-1]
+    price, rsi, sma200, atr = curr['Close'], curr['RSI'], curr['SMA200'], curr['ATR']
+    rvol = curr['Volume'] / df['Volume'].tail(20).mean()
+   
+    # --- 3. Return the data (Added P/E Forward here) ---
+    return {
+        "Ticker": symbol,
+        "Price": f"${price:.2f}",
+        "P/E Fwd": fwd_pe,  # <--- New Column
+        "RSI": round(rsi, 1),
+        "RVOL": f"{rvol:.1f}x",
+        "Sizing": f"{int((funds * risk) / (atr * 2))} Shrs" if atr > 0 else "0",
+        "Action": "💎 BUY DIP" if price > sma200 and rsi < 35 else "🟡 HOLD"
+    }
+
     # Manual Math for Cloud Stability
     df['SMA200'] = df['Close'].rolling(window=200).mean()
     delta = df['Close'].diff()
