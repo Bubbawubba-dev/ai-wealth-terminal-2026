@@ -148,15 +148,49 @@ if check_password():
             column_config={"News": st.column_config.LinkColumn("Research Link")}
         )
 
-    with tab2:
-        selected_stock = st.selectbox("Select Asset for Detailed View:", t_list)
+        with tab2:
+        st.subheader("📈 Technical Analysis")
+       
+        # 📱 Mobile-Friendly Selection (Vertical list instead of a dropdown)
+        selected_stock = st.radio(
+            "Select Asset to View Chart:",
+            t_list,
+            horizontal=True, # Rows of buttons instead of a long list
+            index=0
+        )
+       
         if selected_stock and "bulk_data" in st.session_state:
+            # Add a "Quick Stats" row for mobile eyes
             df_ind = st.session_state.bulk_data[selected_stock] if len(t_list) > 1 else st.session_state.bulk_data
            
-            fig = go.Figure(data=[go.Candlestick(x=df_ind.index, open=df_ind['Open'], high=df_ind['High'], low=df_ind['Low'], close=df_ind['Close'], name="Price")])
-            fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['Close'].rolling(200).mean(), line=dict(color='gold', width=2), name='SMA 200'))
-            fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            # Simplified Chart for Mobile
+            fig = go.Figure(data=[go.Candlestick(
+                x=df_ind.index,
+                open=df_ind['Open'],
+                high=df_ind['High'],
+                low=df_ind['Low'],
+                close=df_ind['Close'],
+                name="Price"
+            )])
+           
+            # Keep the gold line but make it thinner for small screens
+            fig.add_trace(go.Scatter(
+                x=df_ind.index,
+                y=df_ind['Close'].rolling(200).mean(),
+                line=dict(color='gold', width=1.5),
+                name='SMA 200'
+            ))
+           
+            # 📱 Force chart to be taller on mobile and remove extra margins
+            fig.update_layout(
+                template="plotly_dark",
+                xaxis_rangeslider_visible=False,
+                height=400,
+                margin=dict(l=0, r=0, t=20, b=0),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+           
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     with tab3:
         if not st.session_state.corr.empty:
