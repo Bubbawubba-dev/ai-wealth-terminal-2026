@@ -40,7 +40,6 @@ def analyze_stock(symbol, df, funds, risk):
         if df.empty or len(df) < 200: return None
        
         # 1. Indicators
-        df['SMA50'] = df['Close'].rolling(50).mean()
         df['SMA200'] = df['Close'].rolling(200).mean()
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -50,40 +49,42 @@ def analyze_stock(symbol, df, funds, risk):
        
         curr = df.iloc[-1]
         price = curr['Close']
-        high_52w = df['High'].tail(252).max()
+        atr = curr['ATR']
         rvol = curr['Volume'] / df['Volume'].tail(20).mean()
        
-        # 2. Rulebook Checks (Minervini & O'Neil)
-        is_stage_2 = price > df['SMA50'].iloc[-1] > df['SMA200'].iloc[-1]
-        near_highs = (price / high_52w) > 0.90
+        # 2. Entry / Exit / Sizing Logic
+        suggested_entry = df['High'].tail(5).max()
+        suggested_stop = price - (atr * 2.5) # Slightly wider stop for 2026 volatility
+        suggested_target = price + (atr * 5)  # Aiming for 2x the stop distance
        
-        # 3. Conviction Scoring
+        # 3. Risk/Reward Math
+        potential_risk = price - suggested_stop
+        potential_reward = suggested_target - price
+        rr_ratio = potential_reward / potential_risk if potential_risk > 0 else 0
+       
+        # 4. Conviction Scoring
         score = 0
-        if is_stage_2: score += 4
-        if rvol > 2.0: score += 3
-        if near_highs: score += 2
-        if 40 < curr['RSI'] < 70: score += 1
-        elif curr['RSI'] > 80: score -= 2
+        if price > df['SMA200'].iloc[-1]: score += 3
+        if rvol > 1.8: score += 4
+        if rr_ratio >= 2.0: score += 3 # Reward for better trade setups
 
-        # 4. Action Triggers
         status = "🟡 MONITOR"
-        if score >= 8 and rvol > 1.8: status = "🔥 CAN SLIM BUY"
-        elif is_stage_2 and curr['RSI'] < 35: status = "💎 MINERVINI DIP"
-        elif rvol < 1.0 and price > df['High'].shift(1).iloc[-1]: status = "⚠️ FAKEOUT"
+        if score >= 8 and rvol > 1.8: status = "🔥 ENTRY"
+        elif price <= suggested_stop: status = "🛑 STOP"
        
-        shares = int((funds * risk) / (curr['ATR'] * 2)) if curr['ATR'] > 0 else 0
-        news_url = f"https://yahoo.com{symbol}"
+        shares = int((funds * risk) / potential_risk) if potential_risk > 0 else 0
 
         return {
             "Ticker": symbol,
             "Price": f"${price:.2f}",
             "Score": f"{score}/10",
-            "Stage": "🚀 Stage 2" if is_stage_2 else "😴 Setup",
-            "RVOL": f"{rvol:.1f}x",
-            "RSI": int(curr['RSI']),
-            "Action": status,
+            "R/R Ratio": f"{rr_ratio:.1f}x", # NEW COLUMN
+            "Entry": f"${suggested_entry:.2f}",
+            "Stop": f"${suggested_stop:.2f}",
+            "Target": f"${suggested_target:.2f}",
             "Sizing": f"{shares} Shrs",
-            "News": news_url
+            "Action": status,
+            "News": f"https://yahoo.com{symbol}"
         }
     except: return None
 
