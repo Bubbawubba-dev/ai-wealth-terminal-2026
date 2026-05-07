@@ -2,7 +2,20 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# MUST be the first Streamlit call
+# ---------------------------
+# YOUR EXISTING LOGIC GOES HERE
+# ---------------------------
+# def check_password():
+#     ...
+#
+# def get_bulk_data(tickers):
+#     ...
+#
+# def analyze_stock(ticker, df, funds, risk):
+#     ...
+# ---------------------------
+
+# Must be the first Streamlit call
 st.set_page_config(page_title="Wealth Terminal", layout="wide")
 
 # --- GLOBAL STYLING ---
@@ -73,14 +86,13 @@ if check_password():
         ["📊 Overview", "🔥 Risk", "📋 Execution", "🤖 AI Insights"]
     )
 
-
     # ---------------------------
     # 📊 OVERVIEW TAB
     # ---------------------------
     with tab_overview:
 
-        # --- MARKET RADAR ---
         if "results" in st.session_state:
+            # MARKET RADAR
             st.markdown("<div class='card'>", unsafe_allow_html=True)
             st.subheader("📡 Market Radar")
 
@@ -89,11 +101,9 @@ if check_password():
             df = df.sort_values("AbsReturn", ascending=False)
 
             cols = st.columns(6)
-
             for i, (_, row) in enumerate(df.head(6).iterrows()):
                 color = "#00ff99" if row["Return"] > 0 else "#ff4d4d"
                 arrow = "▲" if row["Return"] > 0 else "▼"
-
                 cols[i].markdown(
                     f"""
                     <div style='padding:14px; border-radius:12px; 
@@ -109,13 +119,9 @@ if check_password():
                     """,
                     unsafe_allow_html=True
                 )
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # --- KPIs ---
-        if "results" in st.session_state:
-            df = st.session_state.results
-
+            # KPIs + table
             colA, colB, colC = st.columns(3)
             colA.markdown(f"<div class='big-kpi'>{df['Return'].mean():.2f}%</div>Avg Return", unsafe_allow_html=True)
             colB.markdown(f"<div class='big-kpi'>{df['Volatility'].mean():.2f}%</div>Volatility", unsafe_allow_html=True)
@@ -125,12 +131,10 @@ if check_password():
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-
     # ---------------------------
     # 🔥 RISK TAB
     # ---------------------------
     with tab_risk:
-
         st.subheader("🔥 Risk Correlation Heatmap")
 
         if "corr" in st.session_state:
@@ -156,12 +160,10 @@ if check_password():
             )
             st.markdown("</div>", unsafe_allow_html=True)
 
-
     # ---------------------------
     # 📋 EXECUTION TAB
     # ---------------------------
     with tab_execution:
-
         st.subheader("📋 Market Execution")
 
         if "results" in st.session_state:
@@ -173,12 +175,10 @@ if check_password():
             )
             st.markdown("</div>", unsafe_allow_html=True)
 
-
     # ---------------------------
     # 🤖 AI INSIGHTS TAB
     # ---------------------------
     with tab_ai:
-
         st.subheader("🤖 AI Insights")
 
         if "results" in st.session_state:
