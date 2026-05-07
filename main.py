@@ -1,3 +1,6 @@
+
+
+```python
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -162,12 +165,14 @@ def fetch_ticker_info(symbol: str) -> Dict:
     """
     try:
         t = yf.Ticker(symbol)
-        # Using .get_info() (if available) is often more stable with newer yfinance.
-        # If running older yfinance, fallback to .info
+        # Prefer new get_info API if available
         get_info = getattr(t, "get_info", None)
         if callable(get_info):
-            return get_info() or {}
-        return getattr(t, "info", {}) or {}
+            info = get_info()
+        else:
+            info = getattr(t, "info", {})
+
+        return info or {}
     except Exception as exc:
         logger.warning("Failed to fetch info for %s: %s", symbol, exc)
         return {}
@@ -249,7 +254,7 @@ def analyze_stock(
         # --- Fundamentals (best-effort via Yahoo) ---
         info = fetch_ticker_info(symbol)
         forward_pe = info.get("forwardPE", None)
-        sector = info.get("sector") or info.get("industry")  # fallback
+        sector = info.get("sector") or info.get("industry")
         long_name = info.get("longName") or info.get("shortName") or symbol
 
         revenue_growth = info.get("revenueGrowth", None)
@@ -275,10 +280,11 @@ def analyze_stock(
         valuation_view = "N/A"
         undervalued = False
         overvalued = False
-        pe_vs_sector: Optional[float] = None
 
+        pe_vs_sector = None
         if isinstance(forward_pe, (int, float)) and forward_pe > 0:
-            pe_vs_sector = forward_pe / sector_bench if sector_bench else None
+            if sector_bench:
+                pe_vs_sector = forward_pe / sector_bench
             if pe_vs_sector is not None:
                 if pe_vs_sector < 0.8:
                     valuation_view = "⬇️ Undervalued vs sector"
@@ -304,12 +310,12 @@ def analyze_stock(
             fin_quality = "ℹ️ Mixed"
 
         # --- Position sizing ---
-        # Basic ATR-based bet size: risk_pct of portfolio with 2*ATR stop.
         shares = 0
         if isinstance(atr, (int, float)) and atr > 0:
             dollar_risk_per_share = 2 * atr
             position_risk_dollars = funds * risk_pct
-            shares = int(position_risk_dollars / dollar_risk_per_share) if dollar_risk_per_share > 0 else 0
+            if dollar_risk_per_share > 0:
+                shares = int(position_risk_dollars / dollar_risk_per_share)
 
         news_url = f"https://finance.yahoo.com/quote/{symbol}"
 
@@ -334,21 +340,19 @@ def analyze_stock(
                 entry_conditions.append(False)
 
             # Trend/technical conditions
-            entry_conditions.append(price >= sma200)      # uptrend
-            entry_conditions.append(rsi < 70)             # avoid extreme overbought entries
+            entry_conditions.append(price >= sma200)
+            entry_conditions.append(rsi < 70)
 
             # Sentiment overlay
             if market_sentiment_flag == "hot":
-                # In very hot tape, avoid new longs unless strong dip/undervalued.
-                if not undervalued and rsi > 40:
+                if (not undervalued) and rsi > 40:
                     entry_conditions.append(False)
             elif market_sentiment_flag == "bear":
-                # In bear tape, require dip-buy signal.
                 if status != "💎 BUY DIP":
                     entry_conditions.append(False)
 
             if all(entry_conditions):
-                entry_level = f"Entry ~${base_entry:.2f} / SL ~${stop_loss:.2f}"
+                entry_level = "Entry ~${:.2f} / SL ~${:.2f}".format(base_entry, stop_loss)
             else:
                 entry_level = "No fresh entry (stand aside)"
 
@@ -362,7 +366,9 @@ def analyze_stock(
                 exit_signals.append("Parabolic breakout – consider scaling out")
 
             if exit_signals:
-                exit_level = f"TP ~${take_profit:.2f} | Tighten SL ({'; '.join(exit_signals)})"
+                exit_level = "TP ~${:.2f} | Tighten SL ({})".format(
+                    take_profit, "; ".join(exit_signals)
+                )
             else:
                 if price < sma200:
                     exit_level = "Below 200d – consider reducing / exiting on strength"
@@ -373,17 +379,17 @@ def analyze_stock(
         result: Dict = {
             "Ticker": symbol,
             "Name": long_name,
-            "Price": f"${price:.2f}",
-            "Score": f"{score}/10",
-            "RVOL": f"{rvol:.1f}x",
+            "Price": "${:.2f}".format(price),
+            "Score": "{}/10".format(score),
+            "RVOL": "{:.1f}x".format(rvol),
             "RSI": int(rsi) if pd.notna(rsi) else None,
-            "Forward P/E": f"{forward_pe:.1f}" if isinstance(forward_pe, (int, float)) and forward_pe > 0 else "N/A",
+            "Forward P/E": "{:.1f}".format(forward_pe) if isinstance(forward_pe, (int, float)) and forward_pe > 0 else "N/A",
             "Valuation": valuation_view,
             "Fin Quality": fin_quality,
             "Action": status,
             "Entry Level": entry_level,
             "Exit Level": exit_level,
-            "Sizing": f"{shares} Shrs" if shares > 0 else "0 Shrs",
+            "Sizing": "{} Shrs".format(shares) if shares > 0 else "0 Shrs",
             "News": news_url,
         }
 
@@ -406,8 +412,8 @@ def main() -> None:
 
     # ------------- Sidebar Controls -------------
     with st.sidebar:
-        funds: float = st.number_input("Portfolio $", value=100000.0, min_value=0.0, step=1000.0)
-        risk_pct: float = st.slider("Risk % per Position", 0.5, 3.0, 1.5) / 100.0
+        funds = st.number_input("Portfolio $", value=100000.0, min_value=0.0, step=1000.0)
+        risk_pct = st.slider("Risk % per Position", 0.5, 3.0, 1.5) / 100.0
 
         mode = st.radio("Scanner Mode", ["My Watchlist", "Momentum Hot Picks 🔥"])
 
@@ -459,7 +465,10 @@ def main() -> None:
                 if corr_price_df.empty:
                     st.session_state.corr = pd.DataFrame()
                 else:
-                    close_df = corr_price_df["Close"] if "Close" in corr_price_df else corr_price_df
+                    if "Close" in corr_price_df:
+                        close_df = corr_price_df["Close"]
+                    else:
+                        close_df = corr_price_df
                     if isinstance(close_df.columns, pd.MultiIndex):
                         close_df.columns = close_df.columns.get_level_values(0)
                     corr = close_df.dropna(axis=1, how="all").corr()
@@ -472,7 +481,6 @@ def main() -> None:
             st.session_state.sentiment_flag = sentiment_flag
 
     # ------------- Top-level Metrics -------------
-    tickers = tickers if "tickers" in locals() else []
     avg_rsi = st.session_state.get("avg_rsi", 50.0)
     sentiment_flag = st.session_state.get("sentiment_flag", "bull")
 
@@ -484,8 +492,8 @@ def main() -> None:
         sentiment_label = "🐻 BEAR"
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Assets Analyzed", len(tickers))
-    c2.metric("Market Sentiment", sentiment_label, f"Avg RSI {avg_rsi:.1f}")
+    c1.metric("Assets Analyzed", len(tickers) if "tickers" in locals() else 0)
+    c2.metric("Market Sentiment", sentiment_label, "Avg RSI {:.1f}".format(avg_rsi))
     c3.metric("Terminal Time", datetime.now().strftime("%H:%M"))
 
     # ------------- Dashboard -------------
@@ -528,6 +536,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 ```
-
-
 
