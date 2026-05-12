@@ -112,12 +112,55 @@ if check_password():
         st.dataframe(st.session_state.results, use_container_width=True, hide_index=True)
 
     with tab2:
-        sel = st.radio("Asset:", t_list, horizontal=True)
-        if sel and "bulk_data" in st.session_state:
-            df_plot = st.session_state.bulk_data[sel].copy()
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
-            fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'].rolling(200).mean(), line=dict(color='gold', width=2), name='SMA 200'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'].rolling(50).mean(), line=dict(color='cyan', width=1), name='SMA 50'), row=1, col=1)
-            fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
-            st.plotly_chart(fig, use_container_width=True)
+    sel = st.radio("Asset:", t_list, horizontal=True)
+
+    if sel and "bulk_data" in st.session_state:
+
+        df_raw = st.session_state.bulk_data
+
+        # --- FIX MULTI-INDEX ISSUE ---
+        if isinstance(df_raw.columns, pd.MultiIndex):
+            df_plot = df_raw[sel].copy()
+        else:
+            df_plot = df_raw.copy()
+
+        df_plot = df_plot.dropna()
+
+        # --- BUILD CHART ---
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            row_heights=[0.7, 0.3],
+            vertical_spacing=0.05
+        )
+
+        fig.add_trace(go.Candlestick(
+            x=df_plot.index,
+            open=df_plot['Open'],
+            high=df_plot['High'],
+            low=df_plot['Low'],
+            close=df_plot['Close'],
+            name="Price"
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=df_plot.index,
+            y=df_plot['Close'].rolling(200).mean(),
+            line=dict(color='gold', width=2),
+            name='SMA 200'
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=df_plot.index,
+            y=df_plot['Close'].rolling(50).mean(),
+            line=dict(color='cyan', width=1),
+            name='SMA 50'
+        ), row=1, col=1)
+
+        fig.update_layout(
+            template="plotly_dark",
+            xaxis_rangeslider_visible=False,
+            height=600
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
