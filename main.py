@@ -112,7 +112,7 @@ if check_password():
         st.dataframe(st.session_state.results, use_container_width=True, hide_index=True)
 
     with tab2:
-    sel = st.radio("Asset:", t_list, horizontal=True)
+        sel = st.radio("Asset:", t_list, horizontal=True)
 
     if sel and "bulk_data" in st.session_state:
 
