@@ -1,121 +1,142 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime
 import requests
-import time
-from datetime import datetime, timedelta
 
-# --- 🛡️ SECURITY & AUTH ---
+st.set_page_config(page_title="Wealth Terminal v4.9", layout="wide")
+
+def get_hot_picks():
+    try:
+        url = "https://yahoo.com"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        df_list = pd.read_html(response.text)
+        if df_list:
+            df = df_list[0]
+            return df['Symbol'].tolist()[:15]
+    except:
+        return ["HUT", "AMD", "SMCI", "FLEX", "COMP", "VCYT", "VECO", "ARM", "IONQ", "PLTR"]
+
 def check_password():
-if "password_correct" not in st.session_state:
-st.sidebar.title("🔐 Terminal Access")
-pwd = st.sidebar.text_input("Access Key", type="password")
-if st.sidebar.button("Unlock"):
-if pwd == st.secrets.get("APP_PASSWORD", "1234"):
-st.session_state["password_correct"] = True
-st.rerun()
-return False
-return True
+    if "password_correct" not in st.session_state:
+        st.sidebar.title("🔐 Access")
+        pwd = st.sidebar.text_input("Access Key", type="password")
+        if st.sidebar.button("Unlock"):
+            if pwd == st.secrets.get("APP_PASSWORD", "1234"):
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.sidebar.error("❌ Invalid")
+        return False
+    return True
 
-# --- 📡 NOTIFICATIONS ---
-def send_telegram(msg):
-token = st.secrets.get("TELEGRAM_TOKEN")
-chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
-if token and chat_id:
-try:
-url = f"https://telegram.org{token}/sendMessage?chat_id={chat_id}&text={msg}&parse_mode=Markdown"
-requests.get(url, timeout=5)
-except: pass
+def analyze_stock(symbol, df, info, funds, risk):
+    try:
+        if len(df) < 200:
+            return None
 
-# --- ⚙️ DATA ENGINE ---
-@st.cache_data(ttl=600)
-def get_market_data(symbol):
-try:
-# Sanitize ticker input
-symbol = "".join(e for e in symbol if e.isalnum() or e == '.').upper()
-t = yf.Ticker(symbol)
-df = t.history(period="1y")
-if df.empty or len(df) < 200: return None, None
-return df, t.info
-except: return None, None
+        df['SMA200'] = df['Close'].rolling(200).mean()
+        df['SMA50'] = df['Close'].rolling(50).mean()
 
-# --- 🧠 LOGIC ENGINE ---
-def analyze(symbol, funds, risk, is_risky=False):
-df, info = get_market_data(symbol)
-if df is None: return {"Ticker": symbol, "Action": "❌ ERROR"}
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        df['RSI'] = 100 - (100 / (1 + (gain / (loss + 1e-9))))
 
-# 1. Indicators
-df['SMA200'] = ta.sma(df['Close'], length=200)
-df['RSI'] = ta.rsi(df['Close'], length=14)
-df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
+        df['ATR'] = (df['High'] - df['Low']).rolling(14).mean()
 
-curr = df.iloc[-1]
-price, rsi, sma200, atr = curr['Close'], curr['RSI'], curr['SMA200'], curr['ATR']
+        curr = df.iloc[-1]
+        price, rsi, sma50, sma200, atr = curr['Close'], curr['RSI'], curr['SMA50'], curr['SMA200'], curr['ATR']
+        rvol = curr['Volume'] / df['Volume'].tail(20).mean()
 
-# 2. RVOL & Liquidity
-rvol = curr['Volume'] / df['Volume'].tail(20).mean()
-usd_vol = (curr['Volume'] * price) / 1_000_000
+        dist_from_sma50 = (price / sma50) - 1
+        suggested_entry = df['High'].tail(5).max()
+        suggested_stop = price - (atr * 2.5)
 
-# 3. Strategy Logic
-regime = "🐂 BULL" if price > sma200 else "🐻 BEAR"
-status = "🟡 HOLD"
+        score = 0
+        if price > sma200: score += 3
+        if rvol > 2.0: score += 4
+        if 48 < rsi < 65: score += 3
+        elif rsi > 75: score -= 3
+        if dist_from_sma50 > 0.15: score -= 4
 
-if regime == "🐂 BULL" and rsi < 35:
-status = "💎 BUY DIP"
-elif is_risky and rvol > 2.0 and rsi < 70:
-status = "🔥 BREAKOUT"
-send_telegram(f"🚀 *BREAKOUT:* {symbol} \nVol: {rvol:.1f}x \nPrice: ${price:.2f}")
-elif rsi > 78:
-status = "🛑 EXIT"
+        status = "🟡 MONITOR"
+        if score >= 8 and rvol > 1.8 and dist_from_sma50 < 0.12:
+            status = "🔥 BUY"
+        elif price <= suggested_stop:
+            status = "🛑 STOP"
 
-# 4. Sizing (ATR 2.0x)
-stop_dist = (atr * 2)
-shares = int((funds * risk) / stop_dist) if stop_dist > 0 else 0
+        return {
+            "Ticker": symbol,
+            "Price": round(price, 2),
+            "Score": f"{score}/10",
+            "Action": status,
+            "Ext%": f"{dist_from_sma50*100:.1f}%",
+            "RSI": int(rsi),
+            "RVOL": f"{rvol:.1f}x",
+            "Entry": round(suggested_entry, 2),
+            "Stop": round(suggested_stop, 2),
+            "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs"
+        }
+    except:
+        return None
 
-# Small sleep to prevent rate-limiting
-time.sleep(0.05)
-
-return {
-"Ticker": symbol, "Price": f"${price:.2f}", "RSI": round(rsi, 1),
-"RVOL": f"{rvol:.1f}x", "Liq": "🟢" if usd_vol > 50 else "🔴",
-"Sizing": f"{shares} Shrs", "Stop": f"${(price - stop_dist):.2f}",
-"Action": status, "raw_close": price
-}
-
-# --- 🖥️ UI ---
 if check_password():
-st.title("🐋 Institutional Wealth Terminal 2026")
 
-with st.sidebar:
-st.header("🕹️ Strategy Parameters")
-funds = st.number_input("Account Balance ($)", value=100000)
-risk = st.slider("Risk Per Trade (%)", 0.5, 3.0, 1.5) / 100
-core = st.text_input("Core Holdings", "NVDA,AVGO,MSFT,REGN")
-risk_list = st.text_input("Incubator", "CIFR,NBIS,IONQ,RGTI")
-if st.button("♻️ Refresh Data"): st.cache_data.clear()
+    st.title("🐋 Institutional Terminal 2026")
 
-all_t = [t.strip().upper() for t in (core + "," + risk_list).split(",") if t]
-data = [analyze(t, funds, risk, t in risk_list.upper()) for t in all_t]
+    with st.sidebar:
+        funds = st.number_input("Portfolio $", value=100000)
+        risk = st.slider("Risk %", 0.5, 3.0, 1.5) / 100
+        mode = st.radio("Scanner", ["Watchlist", "Hot Picks 🔥"])
 
-st.subheader("📋 Market Execution Dashboard")
-st.dataframe(pd.DataFrame(data).drop(columns=['raw_close']), use_container_width=True, hide_index=True)
+        t_list = (
+            [t.strip().upper() for t in st.text_area("Tickers", "NVDA,AMD,HUT,SMCI,ARM").split(",") if t]
+            if mode == "Watchlist"
+            else get_hot_picks()
+        )
 
-# Correlation Guard
-if len(all_t) > 1:
-st.divider()
-st.subheader("🛡️ Correlation Guard (Avoid > 0.70)")
-p_data = yf.download(all_t, period="6mo", progress=False)['Close']
-st.dataframe(p_data.corr().style.background_gradient(cmap='RdYlGn', axis=None), use_container_width=True)
+        run = st.button("🚀 SCAN")
 
-# Charts
-st.divider()
-sel = st.selectbox("Detailed Analysis Chart:", all_t)
-if sel:
-df_c, _ = get_market_data(sel)
-if df_c is not None:
-fig = go.Figure(data=[go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name="Price")])
-fig.add_trace(go.Scatter(x=df_c.index, y=ta.sma(df_c['Close'], 200), line=dict(color='gold', width=2), name='SMA 200'))
-fig.update_layout(template="plotly_dark", height=450, xaxis_rangeslider_visible=False, margin=dict(l=0,r=0,b=0,t=30))
-st.plotly_chart(fig, use_container_width=True)
+    if run or "results" not in st.session_state:
+        bulk_df = yf.download(t_list, period="2y", group_by='ticker', progress=False)
+
+        res_list = []
+        for t in t_list:
+            ticker_data = bulk_df[t].copy() if isinstance(bulk_df.columns, pd.MultiIndex) else bulk_df.copy()
+            res = analyze_stock(t, ticker_data, yf.Ticker(t).info, funds, risk)
+            if res:
+                res_list.append(res)
+
+        st.session_state.results = pd.DataFrame(res_list)
+        st.session_state.bulk_data = bulk_df
+
+    tab1, tab2 = st.tabs(["📋 Execution", "📈 Indicators"])
+
+    with tab1:
+        st.dataframe(st.session_state.results, use_container_width=True, hide_index=True)
+
+    with tab2:
+        sel = st.radio("Asset:", t_list, horizontal=True)
+
+        if sel and "bulk_data" in st.session_state:
+            df_raw = st.session_state.bulk_data
+            df_plot = df_raw[sel].copy() if isinstance(df_raw.columns, pd.MultiIndex) else df_raw.copy()
+            df_plot = df_plot.dropna()
+
+            fig = make_subplots(
+                rows=2, cols=1,
+                shared_xaxes=True,
+                row_heights=[0.7, 0.3],
+                vertical_spacing=0.05
+            )
+
+            fig.add_trace(go.Candlestick(
+                x=df_plot.index,
+                open=df_plot['Open'],
+                high=df_plot['High'],
+                low=df_plot['Low'],
+                close=df_plot['Close'],
