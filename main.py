@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+import requests
+
 
 # --- 1. CONFIG ---
 st.set_page_config(page_title="Wealth Terminal v4.9", layout="wide")
