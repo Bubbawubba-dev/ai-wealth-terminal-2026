@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v7.2", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v8.0", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -49,10 +49,10 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE ---
+# --- 4. ANALYTICS ENGINE WITH THREE EXECUTION RULES & TRAILING STOPS ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
-        if df is None or len(df) < 30:
+        if df is None or len(df) < 60:
             return None
        
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -63,11 +63,10 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         info = ticker_obj.info if hasattr(ticker_obj, 'info') else {}
         operating_margin = info.get('operatingMargins', 0.0)
         return_on_assets = info.get('returnOnAssets', 0.0)
-       
         operating_margin = 0.0 if operating_margin is None else float(operating_margin)
         return_on_assets = 0.0 if return_on_assets is None else float(return_on_assets)
 
-        # Technical Engine
+        # Technical Engine Metrics
         has_macro_history = len(df) >= 200
         df['SMA200'] = df['Close'].rolling(200).mean() if has_macro_history else df['Close'].mean()
         df['SMA50'] = df['Close'].rolling(50).mean() if len(df) >= 50 else df['Close'].mean()
@@ -81,15 +80,15 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         curr = df.iloc[-1]
         price, rsi, sma50, sma200, atr = float(curr['Close']), float(curr['RSI']), float(curr['SMA50']), float(curr['SMA200']), float(curr['ATR'])
        
+        # Volume Velocity Analytics
         short_term_vol = df['Volume'].tail(3).mean()
         historical_base = df['Volume'].tail(60).mean()
         xvol = float(short_term_vol / historical_base if historical_base > 0 else 1.0)
        
         dist_from_sma50 = float((price / sma50) - 1 if sma50 > 0 else 0.0)
         suggested_entry = float(df['High'].tail(5).max())
-        suggested_stop = float(price - (atr * 1.8))
        
-        # Research Wizard Parameters
+        # Research Wizard Parameters Pass-Through
         chg_4w = float((price / df['Close'].iloc[-21]) - 1.0) if len(df) >= 21 else 0.0
         high_52w = float(df['High'].tail(252).max() if len(df) >= 252 else df['High'].max())
         ratio_52w = float(price / high_52w if high_52w > 0 else 0.0)
@@ -115,6 +114,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if rsi > 82 or dist_from_sma50 > 0.35: zacks_score += 1
         zacks_rank = int(max(1, min(5, zacks_score)))
 
+        # Scoring Logic Core Frame
         score = 0
         is_above_sma200 = price > sma200 if has_macro_history else True
         if is_above_sma200: score += 3  
@@ -124,45 +124,76 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         elif xvol >= 2.0: score += 2  
         if dist_from_sma50 > 0.40: score -= 4  
            
-        status = "🟡 MONITOR"
+        # Standard Technical Trigger Baseline
+        base_status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
        
         if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.35:
-            status = "🔥 BUY"
+            base_status = "🔥 BUY"
             reason = "Explosive Volume Breakout Run"
-        elif price <= suggested_stop:
-            status = "🛑 STOP"
-            reason = "Volatility Stop Hit"
 
+        # --- IMPLEMENTATION OF THE 3 STRICT DAY-TRADING EXECUTION RULES ---
+        # Rule 1: Volume Pullback Check (Do not buy if 1-day volume is dry at the peak)
+        vol_is_drying_up = float(curr['Volume']) < df['Volume'].tail(5).mean()
+       
+        # Rule 2: Consolidation Check (Is the asset trading close to its base or too extended?)
+        is_overextended = dist_from_sma50 > 0.22
+       
+        # Rule 3: Entry Trigger Check (Has it cleared the 5-day breakout line?)
+        has_broken_out_5d = price >= suggested_entry
+
+        # Intercept Logic: Overrides the BUY status if rules are violated
+        status = base_status
+        if base_status == "🔥 BUY":
+            if is_overextended:
+                status = "⏳ COOLING OFF (OVEREXTENDED)"
+                reason = "Rule 2 Violation: Extended >22% from SMA50. Await mean-reversion."
+            elif vol_is_drying_up and not has_broken_out_5d:
+                status = "⏳ BASE FORMING (LOW VOL)"
+                reason = "Rule 1 & 3 Violation: Institutional volume dry at highs. Await 5D High breakout handle."
+            elif not has_broken_out_5d:
+                status = "🟡 SETTING UP"
+                reason = "Rule 3 Violation: Waiting for a clean breakout cross above 5-Day High resistance."
+            else:
+                status = "🚀 EXECUTE ACTIVE BUY"
+                reason = "All 3 Execution Rules Cleared: Heavy volume breakout from low extension base."
+
+        # --- AUTOMATED TRAILING STOP-LOSS & TAKE-PROFIT ENGINE ---
+        # Volatility-adjusted parameters optimized for micro-caps
+        initial_stop_price = float(price - (atr * 1.8))
+        trailing_stop_floor = float(price - (atr * 1.5))  # Tighter trailing stop to protect paper profits
+        take_profit_target = float(price + (atr * 2.5))   # Dynamic mathematical exit target
+       
         horizon = "⏳ WATCHLIST"
-        if "BUY" in status:
+        if "BUY" in status or "EXECUTE" in status:
             horizon = "⚡ SHORT-TERM SWING" if xvol >= 3.0 else "💎 LONG-TERM HOLD"
-        elif status == "🛑 STOP":
+        elif price <= initial_stop_price:
+            status = "🛑 HARD STOP EXCEEDED"
             horizon = "❌ EXIT POSITION"
+            reason = "Volatility Floor Trailed Out"
 
         daytrade_target = float(price + (atr * 1.5))
         daytrade_stop = float(price - (atr * 1.0))
-        daytrade_trigger = "Awaiting 5D High Cross"
-        if price >= suggested_entry:
-            daytrade_trigger = "🚀 EXECUTE INTRADAY ENTRY"
 
         return {
             "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
             "Action": status, "Horizon Allocation": horizon, "Trigger Reason": reason,
             "Ext%": f"{dist_from_sma50*100:.1f}%", "RSI": int(rsi), "xVOL Velocity": f"{xvol:.1f}x",
-            "Entry": round(suggested_entry, 2), "Stop": round(suggested_stop, 2),
-            "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs",
+            "Initial Stop Floor": round(initial_stop_price, 2),
+            "Dynamic Trailing Stop": round(trailing_stop_floor, 2), # Injected trailing stop metric
+            "Take Profit Target": round(take_profit_target, 2),     # Injected take profit metrics
+            "Sizing": f"{int((funds * risk)/(price - initial_stop_price)) if (price - initial_stop_price)>0 else 0} Shrs",
             "Chg_4W_Raw": float(chg_4w), "Ratio_52W_Raw": float(ratio_52w), "Zacks_Rank": int(zacks_rank),
             "EPS_Revision_Delta": float(eps_revision_momentum),
             "Operating_Margin": operating_margin, "ROA": return_on_assets,
-            "DT_Trigger": daytrade_trigger, "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2)
+            "DT_Trigger": "ACTIVE" if has_broken_out_5d else "STAGED", "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2)
         }
     except:
         return None
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v7.2")
+    st.title("🐋 Institutional Micro-Cap Terminal v8.0")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -221,12 +252,13 @@ if check_password():
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- TAB NAVIGATION ---
+    # --- FOUR-TAB PLATFORM NAVIGATION ---
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix", "🌌 Blue Sky Finder"])
    
     with tab1:
-        st.subheader(f"Micro-Cap Momentum Sweep (Sorted by {sort_by})")
+        st.subheader(f"Micro-Cap Breakout Execution Matrix (Sorted by {sort_by})")
         if not st.session_state.results.empty:
+            # Filters the main execution grid to show entry, trailing stops, and targets
             exclude_internal = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop"]
             display_cols = [c for c in st.session_state.results.columns if c not in exclude_internal]
             st.dataframe(st.session_state.results[display_cols], use_container_width=True, hide_index=True)
@@ -289,38 +321,20 @@ if check_password():
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
-    # --- TAB 4: THE OPERATIONAL BLUE SKY ENGINE ---
     with tab4:
         st.header("🌌 Blue Sky Breakout Engine")
-        st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Volume Velocity Validation (xVOL >= 1.5x)")
-       
         if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
             df_sky = st.session_state.results.copy()
-           
-            # FIXED: Re-built string-to-float column mapping vectors using clean, numeric fields
             df_sky['RVOL_num'] = df_sky['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
            
-            # FIXED SYNTAX MASK: Conditional rules evaluate clean pre-parsed float columns
             gate_proximity = df_sky['Ratio_52W_Raw'] >= 0.96
             gate_fundamental = df_sky['RVOL_num'] >= 1.5
-           
             passed_sky = df_sky[gate_proximity & gate_fundamental].copy()
            
             if not passed_sky.empty:
-                st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs with Institutional Volume Confirmation")
+                st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
-               
-                st.dataframe(
-                    passed_sky[[
-                        "Ticker", "Price", "52W High Proximity", "xVOL Velocity", "RSI",
-                        "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"
-                    ]].rename(columns={
-                        "DT_Trigger": "DayTrade Action",
-                        "DT_Target": "Intraday Profit Target (Exit)",
-                        "DT_Stop": "Tight Intraday Stop (Cut)"
-                    }),
-                    use_container_width=True, hide_index=True
-                )
+                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "xVOL Velocity", "RSI", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"DT_Trigger": "DayTrade Action", "DT_Target": "Intraday Profit Target", "DT_Stop": "Tight Intraday Stop"}), use_container_width=True, hide_index=True)
                 st.write("---")
                 st.subheader("Visualising Blue Sky Margin vs Proximity Cluster Matrix")
                 fig_sky = go.Figure()
