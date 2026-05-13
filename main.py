@@ -38,13 +38,12 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (MOMENTUM & TIE-BREAKER VERSION) ---
+# --- 4. ANALYTICS ENGINE (AGGRESSIVE SWING TRADER VERSION) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk):
     try:
         if df is None or len(df) < 200:
             return None
        
-        # Defensive check for required single-level headers
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
         if not all(col in df.columns for col in required_cols):
             return None
@@ -61,40 +60,39 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
         curr = df.iloc[-1]
         price, rsi, sma50, sma200, atr = curr['Close'], curr['RSI'], curr['SMA50'], curr['SMA200'], curr['ATR']
        
-        # Calculate Relative Volume (RVOL) safely against historical 20-day mean
         historical_vol = df['Volume'].tail(20).mean()
         rvol = curr['Volume'] / historical_vol if historical_vol > 0 else 1.0
        
-        # Strict Sizing and Extension Metrics
         dist_from_sma50 = (price / sma50) - 1
         suggested_entry = df['High'].tail(5).max()
         suggested_stop = price - (atr * 2.5)
        
-        # --- REVISED FINANCIAL LOGIC MATRIX ---
+        # --- REVISED FINANCIAL LOGIC MATRIX (AGGRESSIVE MOMENTUM) ---
         score = 0
         if price > sma200:
-            score += 3  # Core Baseline Trend Check
+            score += 3  # Price is in a macro uptrend
 
         # 1. & 2. The Growth Trader Power Zone Rules
         if 45 <= rsi <= 68:
-            score += 3  # Award premium points inside the Power Zone
+            score += 3  # Stock is inside the Power Zone
        
         if rsi >= 60:
-            score += 2  # Added bonus for successfully shifting from sideways to a confirmed trend
+            score += 3  # INCREASED: Strong reward for shifting from sideways to high momentum
            
-        if rsi > 80:
-            score -= 4  # Penalize heavy execution risk inside the exhaustion/climax arena
+        if rsi > 85:
+            score -= 4  # Raised exhaustion cap from 80 to 85 to allow deeper momentum runs
 
         # 3. Volume Breakdown Extensions
-        if rvol >= 1.8:
-            score += 2  # Institutional commitment bonus
+        if rvol >= 1.2:
+            score += 2  # LOWERED: Now rewards minor volume pickups, not just massive institutional spikes
 
-        if dist_from_sma50 > 0.15:    
-            score -= 4  # Drastic penalty for over-extended rubber-band expansions
+        if dist_from_sma50 > 0.20:    
+            score -= 4  # Raised extension wall from 15% to 20% to avoid cutting off fast runners early
 
-        # Final Action Routing with strict Institutional Volume Tie-Breaker
+        # Aggressive Action Routing
         status = "🟡 MONITOR"
-        if score >= 8 and rvol >= 1.8 and dist_from_sma50 < 0.12:
+        # MODIFIED: Score threshold lowered to 6, RVOL lowered to 1.2, and extension allowed up to 18%
+        if score >= 6 and rvol >= 1.2 and dist_from_sma50 < 0.18:
             status = "🔥 BUY"
         elif price <= suggested_stop:
             status = "🛑 STOP"
@@ -102,10 +100,9 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
         # --- EARNINGS CONCURRENCY GUARD ---
         earnings_date_str = "N/A"
         try:
-            # yfinance returns varied formats or throws exceptions on .calendar; caught safely
             cal = ticker_obj.get_calendar() if hasattr(ticker_obj, 'get_calendar') else None
             if cal is not None and 'Earnings Date' in cal:
-                next_earnings = cal['Earnings Date'][0]
+                next_earnings = cal['Earnings Date']
                 earnings_date_str = next_earnings.strftime('%Y-%m-%d')
                
                 now = datetime.now(timezone.utc) if next_earnings.tzinfo else datetime.now()
@@ -114,7 +111,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
                 if 0 <= days_to_earnings <= 7:
                     status = f"⚠️ EARNINGS ({status})"
         except:
-            pass # Suppressed gracefully to prevent the entire scanner layout from throwing errors
+            pass
 
         return {
             "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
@@ -125,7 +122,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
         }
     except Exception as e:
         return None
-
+        
 # --- 5. DATA & UI ---
 if check_password():
     st.title("🐋 Institutional Terminal v5.0")
