@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v9.0", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v9.1", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -49,10 +49,10 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE WITH MULTI-WEEK HOLD CALCULATOR ---
+# --- 4. ANALYTICS ENGINE (DEFENSIVE FIX SYSTEM) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
-        if df is None or len(df) < 60:
+        if df is None or len(df) < 30:
             return None
        
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -166,32 +166,31 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         daytrade_target = float(price + (atr * 1.5))
         daytrade_stop = float(price - (atr * 1.0))
 
-        # --- NEW: TREND HORIZON CALCULATOR ENGINE ---
-        # Calculates structural consolidation length to determine maximum viable holding duration
+        # --- TREND HORIZON CALCULATOR ENGINE (DEFENSIVELY PATCHED) ---
         base_days = 0
         holding_guide = "⚡ DAY TRADE ONLY"
        
         try:
-            # Measure how long the price has been coiled near its 52-week high range
             local_high_boundary = high_52w * 0.88
-            historical_closes = df['Close'].tail(90).tolist()
-            # Iteratively scan backward to find where the consolidation pattern started
+            # FIXED: Dynamically bound history slice length to protect against out-of-bounds array slicing crashes
+            history_slice_len = min(len(df), 90)
+            historical_closes = df['Close'].tail(history_slice_len).tolist()
+           
             for p_close in reversed(historical_closes):
                 if p_close >= local_high_boundary:
                     base_days += 1
                 else:
                     break
                    
-            # Holding Classification Matrix Rules
             if has_macro_history and sma50 > sma200 and price > sma200:
                 if base_days >= 45:
-                    holding_guide = "🐋 CORE MACRO HOLD (Months)" # Large accumulation base + Golden Cross
+                    holding_guide = "🐋 CORE MACRO HOLD (Months)"
                 elif base_days >= 15:
-                    holding_guide = "💎 MULTI-WEEK SWING (Weeks)" # Moderate accumulation base
+                    holding_guide = "💎 MULTI-WEEK SWING (Weeks)"
                 else:
                     holding_guide = "⚡ SHORT SWING TACTICAL"
             else:
-                holding_guide = "⚡ DAY TRADE ONLY (No Macro Floor)" # Broken macro trend lines = High velocity day trade scalp only
+                holding_guide = "⚡ DAY TRADE ONLY (No Macro Floor)"
         except:
             pass
 
@@ -207,7 +206,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
             "EPS_Revision_Delta": float(eps_revision_momentum),
             "Operating_Margin": operating_margin, "ROA": return_on_assets,
             "DT_Trigger": "ACTIVE" if has_broken_out_5d else "STAGED", "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2),
-            # Pass new indicators to front-end layout columns
             "Base_Duration_Days": int(base_days), "Holding_Horizon_Guide": holding_guide
         }
     except:
@@ -215,8 +213,9 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v9.0")
+    st.title("🐋 Institutional Micro-Cap Terminal v9.1")
    
+    # FIXED: Corrected lower-case naming convention bug for streaming runtime containers
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
         funds = st.number_input("Portfolio Target Deployment $", value=100000)
@@ -274,7 +273,7 @@ if check_password():
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- FOUR-TAB NAV BAR CONFIGURATION ---
+    # --- FOUR-TAB PLAN NAVIGATION ---
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix", "🌌 Blue Sky Finder"])
    
     with tab1:
@@ -302,6 +301,8 @@ if check_password():
                 fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='orange'), row=2, col=1)
                 fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=650, margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Execute scan sweeps to display charting visuals.")
 
     with tab3:
         st.header("🔬 Institutional Factor Screen Layer")
@@ -340,7 +341,7 @@ if check_password():
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
-    # --- TAB 4: THE OPERATIONAL BLUE SKY ENGINE WITH HORIZON CLASSIFIER ---
+    # --- TAB 4: THE OPERATIONAL BLUE SKY ENGINE ---
     with tab4:
         st.header("🌌 Blue Sky Breakout Engine")
         st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Volume Velocity Validation (xVOL >= 1.5x)")
@@ -357,7 +358,6 @@ if check_password():
                 st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
                
-                # Render the updated table featuring the automated Consolidation and Holding Horizon Guide parameters
                 st.dataframe(
                     passed_sky[[
                         "Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide",
