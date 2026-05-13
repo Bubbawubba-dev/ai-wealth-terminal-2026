@@ -38,7 +38,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (AGGRESSIVE SWING TRADER VERSION) ---
+# --- 4. ANALYTICS ENGINE (HIGHLY SENSITIVE MOMENTUM VERSION) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk):
     try:
         if df is None or len(df) < 200:
@@ -67,32 +67,33 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
         suggested_entry = df['High'].tail(5).max()
         suggested_stop = price - (atr * 2.5)
        
-        # --- REVISED FINANCIAL LOGIC MATRIX (AGGRESSIVE MOMENTUM) ---
+        # --- TECHNICAL SCORE ALLOCATION MATRIX ---
         score = 0
         if price > sma200:
-            score += 3  # Price is in a macro uptrend
+            score += 2  # Baseline macro check
 
-        # 1. & 2. The Growth Trader Power Zone Rules
-        if 45 <= rsi <= 68:
-            score += 3  # Stock is inside the Power Zone
+        # The Velocity Power Zone Rules
+        if 55 <= rsi <= 82:
+            score += 4  # Premium points for strong, non-exhausted velocity
        
-        if rsi >= 60:
-            score += 3  # INCREASED: Strong reward for shifting from sideways to high momentum
+        if rsi >= 65:
+            score += 2  # Speed validation points
+
+        # Institutional Volume Triggers
+        if rvol >= 3.5:
+            score += 4  # Massive volume breakout bonus
+        elif rvol >= 1.5:
+            score += 2  
+
+        # Extension Cap Boundary
+        if dist_from_sma50 > 0.45:    
+            score -= 5  
            
-        if rsi > 85:
-            score -= 4  # Raised exhaustion cap from 80 to 85 to allow deeper momentum runs
-
-        # 3. Volume Breakdown Extensions
-        if rvol >= 1.2:
-            score += 2  # LOWERED: Now rewards minor volume pickups, not just massive institutional spikes
-
-        if dist_from_sma50 > 0.20:    
-            score -= 4  # Raised extension wall from 15% to 20% to avoid cutting off fast runners early
-
-        # Aggressive Action Routing
+        # --- REVISED HIGHLY SENSITIVE ACTION ROUTING ---
         status = "🟡 MONITOR"
-        # MODIFIED: Score threshold lowered to 6, RVOL lowered to 1.2, and extension allowed up to 18%
-        if score >= 6 and rvol >= 1.2 and dist_from_sma50 < 0.18:
+       
+        # LOWERED: Score requirement dropped from 7 to 5 to generate aggressive alerts
+        if score >= 5 and rvol >= 1.5 and dist_from_sma50 < 0.40:
             status = "🔥 BUY"
         elif price <= suggested_stop:
             status = "🛑 STOP"
