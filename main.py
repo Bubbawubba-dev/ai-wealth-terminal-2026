@@ -211,8 +211,7 @@ if check_password():
                
         if res_list:
             raw_df = pd.DataFrame(res_list)
-            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
-            raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
+            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) >= 1.5 passed_sky = df_sky[gate_proximity & gate_fundamental].copy()
            
             sort_map = {"Volume Velocity (xVOL)": "RVOL_num", "Extension Level (Ext%)": "Ext_num"}
             target_column = sort_map.get(sort_by, "RVOL_num")
