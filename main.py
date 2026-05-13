@@ -49,7 +49,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (SYNCHRONIZED NUMERIC SCORES) ---
+# --- 4. ANALYTICS ENGINE (LOOSENED EXTENSION MOMENTUM SPECIFICATION) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
         if df is None or len(df) < 30:
@@ -114,7 +114,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if rsi > 82 or dist_from_sma50 > 0.35: zacks_score += 1
         zacks_rank = int(max(1, min(5, zacks_score)))
 
-        # Technical Scoring Matrix
+        # --- REVISED MOMENTUM SCORING MATRIX ---
         score = 0
         is_above_sma200 = price > sma200 if has_macro_history else True
         if is_above_sma200: score += 3  
@@ -122,24 +122,31 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         elif rsi > 82: score -= 2  
         if xvol >= 4.0: score += 4  
         elif xvol >= 2.0: score += 2  
-        if dist_from_sma50 > 0.40: score -= 4  
+       
+        # MODIFIED: Loosened ceiling constraint wall from 40% to 55%, softened penalty to -2
+        if dist_from_sma50 > 0.55:
+            score -= 2  
            
         # Standard Rules Overrides
         base_status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
-        if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.35:
+       
+        # MODIFIED: Shifted acceptable extension threshold block boundary to 50%
+        if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.50:
             base_status = "🔥 BUY"
             reason = "Explosive Volume Breakout Run"
 
         vol_is_drying_up = float(curr['Volume']) < df['Volume'].tail(5).mean()
-        is_overextended = dist_from_sma50 > 0.22
+       
+        # MODIFIED: Intercept fence logic aligned to modern 50% extension envelope parameters
+        is_overextended = dist_from_sma50 > 0.50
         has_broken_out_5d = price >= suggested_entry
 
         status = base_status
         if base_status == "🔥 BUY":
             if is_overextended:
                 status = "⏳ COOLING OFF (OVEREXTENDED)"
-                reason = "Rule 2: Extended >22% from SMA50. Await mean-reversion."
+                reason = "Rule 2: Extended >50% from SMA50. Await mean-reversion."
             elif vol_is_drying_up and not has_broken_out_5d:
                 status = "⏳ BASE FORMING (LOW VOL)"
                 reason = "Rule 1 & 3: Volume drying up at highs. Await breakout."
@@ -206,12 +213,11 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
             "Operating_Margin": operating_margin, "ROA": return_on_assets,
             "DT_Trigger": "ACTIVE" if has_broken_out_5d else "STAGED", "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2),
             "Base_Duration_Days": int(base_days), "Holding_Horizon_Guide": holding_guide,
-            # FIXED: Output clean internal integer column to prevent text-split errors in dataframe step
             "Score_Internal_Num": int(score)
         }
     except:
         return None
-
+        
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
     st.title("🐋 Institutional Micro-Cap Terminal v9.2")
