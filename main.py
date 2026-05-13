@@ -1,25 +1,28 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v4.9", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v5.0", layout="wide")
 
 # --- 2. SCRAPER ---
 def get_hot_picks():
     try:
-        url = "https://yahoo.com"
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        url = "yahoo.com"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         df_list = pd.read_html(response.text)
         if df_list:
-            df = df_list[0]
-            return df['Symbol'].tolist()[:15]
-    except:
-        return ["HUT", "AMD", "SMCI", "FLEX", "COMP", "VCYT", "VECO", "ARM", "IONQ", "PLTR"]
+            df = df_list[0] # Fixed: explicitly extracting the concrete dataframe from the list
+            if 'Symbol' in df.columns:
+                return df['Symbol'].dropna().tolist()[:15]
+    except Exception as e:
+        pass
+    return ["HUT", "AMD", "SMCI", "FLEX", "AAPL", "VCYT", "VECO", "ARM", "IONQ", "PLTR"]
 
 # --- 3. SECURITY ---
 def check_password():
@@ -35,11 +38,17 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (STRICT VERSION) ---
-def analyze_stock(symbol, df, info, funds, risk):
+# --- 4. ANALYTICS ENGINE (MOMENTUM & TIE-BREAKER VERSION) ---
+def analyze_stock(symbol, df, ticker_obj, funds, risk):
     try:
-        if len(df) < 200: return None
+        if df is None or len(df) < 200:
+            return None
        
+        # Defensive check for required single-level headers
+        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df.columns for col in required_cols):
+            return None
+
         # Math Engine
         df['SMA200'] = df['Close'].rolling(200).mean()
         df['SMA50'] = df['Close'].rolling(50).mean()
@@ -51,73 +60,149 @@ def analyze_stock(symbol, df, info, funds, risk):
        
         curr = df.iloc[-1]
         price, rsi, sma50, sma200, atr = curr['Close'], curr['RSI'], curr['SMA50'], curr['SMA200'], curr['ATR']
-        rvol = curr['Volume'] / df['Volume'].tail(20).mean()
        
-        # 🛡️ THE STRICT FILTERS
-        dist_from_sma50 = (price / sma50) - 1 # How far above the average?
+        # Calculate Relative Volume (RVOL) safely against historical 20-day mean
+        historical_vol = df['Volume'].tail(20).mean()
+        rvol = curr['Volume'] / historical_vol if historical_vol > 0 else 1.0
+       
+        # Strict Sizing and Extension Metrics
+        dist_from_sma50 = (price / sma50) - 1
         suggested_entry = df['High'].tail(5).max()
         suggested_stop = price - (atr * 2.5)
        
+        # --- REVISED FINANCIAL LOGIC MATRIX ---
         score = 0
-        if price > sma200: score += 3 # Baseline trend
-        if rvol > 2.0: score += 4     # High conviction volume
-       
-        # RSI "Sweet Spot" (Harder to hit)
-        if 48 < rsi < 65: score += 3
-        elif rsi > 75: score -= 3     # Penalize overbought
-       
-        # Extension Filter (The Rubber Band)
-        if dist_from_sma50 > 0.15:    # If >15% away from SMA50
-            score -= 4                # Heavy penalty for being too "stretched"
+        if price > sma200:
+            score += 3  # Core Baseline Trend Check
 
-        # Final Action Logic
+        # 1. & 2. The Growth Trader Power Zone Rules
+        if 45 <= rsi <= 68:
+            score += 3  # Award premium points inside the Power Zone
+       
+        if rsi >= 60:
+            score += 2  # Added bonus for successfully shifting from sideways to a confirmed trend
+           
+        if rsi > 80:
+            score -= 4  # Penalize heavy execution risk inside the exhaustion/climax arena
+
+        # 3. Volume Breakdown Extensions
+        if rvol >= 1.8:
+            score += 2  # Institutional commitment bonus
+
+        if dist_from_sma50 > 0.15:    
+            score -= 4  # Drastic penalty for over-extended rubber-band expansions
+
+        # Final Action Routing with strict Institutional Volume Tie-Breaker
         status = "🟡 MONITOR"
-        if score >= 8 and rvol > 1.8 and dist_from_sma50 < 0.12:
+        if score >= 8 and rvol >= 1.8 and dist_from_sma50 < 0.12:
             status = "🔥 BUY"
         elif price <= suggested_stop:
             status = "🛑 STOP"
 
+        # --- EARNINGS CONCURRENCY GUARD ---
+        earnings_date_str = "N/A"
+        try:
+            # yfinance returns varied formats or throws exceptions on .calendar; caught safely
+            cal = ticker_obj.get_calendar() if hasattr(ticker_obj, 'get_calendar') else None
+            if cal is not None and 'Earnings Date' in cal:
+                next_earnings = cal['Earnings Date'][0]
+                earnings_date_str = next_earnings.strftime('%Y-%m-%d')
+               
+                now = datetime.now(timezone.utc) if next_earnings.tzinfo else datetime.now()
+                days_to_earnings = (next_earnings - now).days
+               
+                if 0 <= days_to_earnings <= 7:
+                    status = f"⚠️ EARNINGS ({status})"
+        except:
+            pass # Suppressed gracefully to prevent the entire scanner layout from throwing errors
+
         return {
             "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
-            "Action": status, "Ext%": f"{dist_from_sma50*100:.1f}%",
+            "Action": status, "Next Earnings": earnings_date_str, "Ext%": f"{dist_from_sma50*100:.1f}%",
             "RSI": int(rsi), "RVOL": f"{rvol:.1f}x",
             "Entry": round(suggested_entry, 2), "Stop": round(suggested_stop, 2),
             "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs"
         }
-    except: return None
+    except Exception as e:
+        return None
 
 # --- 5. DATA & UI ---
 if check_password():
-    st.title("🐋 Institutional Terminal 2026")
+    st.title("🐋 Institutional Terminal v5.0")
     with st.sidebar:
         funds = st.number_input("Portfolio $", value=100000)
         risk = st.slider("Risk %", 0.5, 3.0, 1.5) / 100
-        mode = st.radio("Scanner", ["Watchlist", "Hot Picks 🔥"])
-        t_list = [t.strip().upper() for t in st.text_area("Tickers", "NVDA,AMD,HUT,SMCI,ARM").split(",") if t] if mode == "Watchlist" else get_hot_picks()
-        run = st.button("🚀 SCAN")
+        mode = st.radio("Scanner Mode", ["Watchlist", "Hot Picks 🔥"])
+       
+        default_tickers = "NVDA,AMD,HUT,SMCI,ARM"
+        user_input = st.text_area("Tickers", default_tickers)
+       
+        if mode == "Watchlist":
+            t_list = [t.strip().upper() for t in user_input.split(",") if t.strip()]
+        else:
+            t_list = get_hot_picks()
+           
+        run = st.button("🚀 EXECUTE SCAN")
 
     if run or "results" not in st.session_state:
+        # Crucial Fix: Explicitly pass group_by='ticker' AND flatten the resulting multi-index
         bulk_df = yf.download(t_list, period="2y", group_by='ticker', progress=False)
+       
         res_list = []
+        clean_ticker_data = {}
+       
         for t in t_list:
-            ticker_data = bulk_df[t].copy() if len(t_list) > 1 else bulk_df.copy()
-            res = analyze_stock(t, ticker_data, yf.Ticker(t).info, funds, risk)
-            if res: res_list.append(res)
-        st.session_state.results = pd.DataFrame(res_list)
-        st.session_state.bulk_data = bulk_df
+            try:
+                # Isolate target asset slice safely from yfinance MultiIndex output dataframe
+                if len(t_list) > 1:
+                    if t in bulk_df.columns.levels[0]:
+                        ticker_data = bulk_df[t].copy()
+                    else:
+                        continue
+                else:
+                    ticker_data = bulk_df.copy()
+                    # If single-ticker download skips MultiIndex generation, normalize explicitly
+                    if isinstance(ticker_data.columns, pd.MultiIndex):
+                        ticker_data.columns = ticker_data.columns.get_level_values(0)
+               
+                # Strip any remnant multi-level names left over by the yfinance engine
+                if isinstance(ticker_data.columns, pd.MultiIndex):
+                    ticker_data.columns = ticker_data.columns.get_level_values(0)
+               
+                clean_ticker_data[t] = ticker_data
+                ticker_obj = yf.Ticker(t)
+               
+                res = analyze_stock(t, ticker_data, ticker_obj, funds, risk)
+                if res:
+                    res_list.append(res)
+            except Exception as e:
+                pass
+               
+        st.session_state.results = pd.DataFrame(res_list) if res_list else pd.DataFrame(columns=["Ticker", "Price", "Score", "Action"])
+        st.session_state.bulk_data = clean_ticker_data
 
-    tab1, tab2 = st.tabs(["📋 Execution", "📈 Indicators"])
+    tab1, tab2 = st.tabs(["📋 Execution Dashboard", "📈 Indicator Analysis Canvas"])
    
     with tab1:
         st.dataframe(st.session_state.results, use_container_width=True, hide_index=True)
 
     with tab2:
-        sel = st.radio("Asset:", t_list, horizontal=True)
-        if sel and "bulk_data" in st.session_state:
-            df_plot = st.session_state.bulk_data[sel].copy()
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
-            fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'].rolling(200).mean(), line=dict(color='gold', width=2), name='SMA 200'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'].rolling(50).mean(), line=dict(color='cyan', width=1), name='SMA 50'), row=1, col=1)
-            fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600)
-            st.plotly_chart(fig, use_container_width=True)
+        # Dynamically protect tab rendering against un-scanned assets or processing omissions
+        valid_selections = [t for t in t_list if t in st.session_state.bulk_data]
+        if valid_selections:
+            sel = st.radio("Asset Pivot View:", valid_selections, horizontal=True)
+            if sel and sel in st.session_state.bulk_data:
+                df_plot = st.session_state.bulk_data[sel].copy()
+               
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+                fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'].rolling(200).mean(), line=dict(color='gold', width=2), name='SMA 200'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Close'].rolling(50).mean(), line=dict(color='cyan', width=1), name='SMA 50'), row=1, col=1)
+               
+                # Bottom panel: Volume & Technical confirmation
+                fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='orange'), row=2, col=1)
+               
+                fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=650, margin=dict(t=20, b=20, l=20, r=20))
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No single-level historical data matrix available to build technical visualizer sweeps.")
