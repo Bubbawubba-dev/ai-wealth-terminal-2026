@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v10.3", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v10.1", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -49,10 +49,10 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE WITH THREE EXECUTION RULES ---
-def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, history_floor=60):
+# --- 4. ANALYTICS ENGINE (LOOSENED PARAMETERS & INTEGRATED METRICS) ---
+def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
-        if df is None or len(df) < history_floor:
+        if df is None or len(df) < 30:
             return None
        
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -122,10 +122,13 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, his
         elif rsi > 82: score -= 2  
         if xvol >= 4.0: score += 4  
         elif xvol >= 2.0: score += 2  
-        if dist_from_sma50 > 0.55: score -= 2  
+       
+        if dist_from_sma50 > 0.55:
+            score -= 2  
            
         base_status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
+       
         if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.50:
             base_status = "🔥 BUY"
             reason = "Explosive Volume Breakout Run"
@@ -209,7 +212,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, his
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v10.3")
+    st.title("🐋 Institutional Micro-Cap Terminal v10.1")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -222,8 +225,9 @@ if check_password():
         feed_mode = st.radio("Active Engine Feed Source", ["Scrape Automated Micro-Cap Index 🚀", "Manual Watchlist Tickers 📋"])
        
         if "Manual Watchlist Tickers 📋" in feed_mode:
-            user_input = st.text_area("Watchlist Input", "MRAM,ASTS,HIMS,QUBT,NVDA,MSFT,CEG,PHYS,CYBR,GNK,AAPL,OXY,BAC,RKLB,ONDS,KTOS")
-            t_list = [t.strip().upper() for t in user_input.replace("\n", ",").split(",") if t.strip()]
+            # Preloaded macro trackers for Tab 5 multi-whale sync validation sweeps
+            user_input = st.text_area("Watchlist Input", "MRAM,ASTS,HIMS,QUBT,NVDA,MSFT,CEG,PHYS,CYBR,GNK,AAPL,OXY,BAC")
+            t_list = [t.strip().upper() for t in user_input.split(",") if t.strip()]
         else:
             with st.spinner("Scraping index..."):
                 t_list = get_micro_cap_universe()
@@ -239,7 +243,6 @@ if check_password():
 
     if run or "results" not in st.session_state:
         res_list = []
-        res_new_swings = []
         clean_ticker_data = {}
        
         for t in t_list:
@@ -250,18 +253,11 @@ if check_password():
                     if isinstance(ticker_data.columns, pd.MultiIndex):
                         ticker_data.columns = ticker_data.columns.get_level_values(0)
                     clean_ticker_data[t] = ticker_data
-                   
-                    # Core Processing (60-Day History Floor Gate)
-                    res = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks, history_floor=60)
+                    res = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks)
                     if res: res_list.append(res)
-                   
-                    # Aggressive New Swings Processing (20-Day History Floor Gate)
-                    res_ns = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks, history_floor=20)
-                    if res_ns: res_new_swings.append(res_ns)
             except:
                 pass
                
-        # Handle Data Conversions Safely for primary result arrays
         if res_list:
             raw_df = pd.DataFrame(res_list)
             raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_df.columns else 1.0
@@ -275,30 +271,15 @@ if check_password():
         else:
             st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
            
-        # Handle Data Conversions safely for the aggressive New Swings frame
-        if res_new_swings:
-            raw_ns_df = pd.DataFrame(res_new_swings)
-            raw_ns_df['RVOL_num'] = raw_ns_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_ns_df.columns else 1.0
-            raw_ns_df['Ext_num'] = raw_ns_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float) if 'Ext%' in raw_ns_df.columns else 0.0
-            raw_ns_df['Score_num'] = raw_ns_df['Score_Internal_Num'].astype(int) if 'Score_Internal_Num' in raw_ns_df.columns else 0
-           
-            sort_map = {"Volume Velocity (xVOL)": "RVOL_num", "Extension Level (Ext%)": "Ext_num", "Technical Score": "Score_num"}
-            target_column = sort_map.get(sort_by, "RVOL_num")
-            sorted_ns_df = raw_ns_df.sort_values(by=target_column, ascending=ascending_bool)
-            st.session_state.results_new_swings = sorted_ns_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
-        else:
-            st.session_state.results_new_swings = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
-           
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- TAB NAVIGATION (TAB 2 VOLUME CHART COMPLETELY REVERTED) ---
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # --- TAB LIST LAYOUT REFACTOR ---
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📋 Execution Dashboard",
         "📈 Technical Visualizer Canvas",
         "🔬 Research Wizard Matrix",
         "🌌 Blue Sky Finder",
-        "👥 Investor Alpha Network",
-        "🔥 New Swings (20D Floor)"
+        "👥 Investor Alpha Network"
     ])
    
     with tab1:
@@ -310,7 +291,6 @@ if check_password():
         else:
             st.info("Execute scanner sweeps to track pipeline data.")
 
-    # REVERTED TAB 2: Returns to the precise single-panel visualizer template layout as requested
     with tab2:
         valid_selections = [t for t in t_list if t in st.session_state.bulk_data]
         if valid_selections:
@@ -318,19 +298,15 @@ if check_password():
             if sel and sel in st.session_state.bulk_data:
                 df_plot = st.session_state.bulk_data[sel].copy()
                 df_plot.index = pd.to_datetime(df_plot.index)
-               
-                # REVERTED: Re-establishing standard single-panel plot engine layout grids
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"))
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
+                fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), row=1, col=1)
                 if 'SMA200' in df_plot.columns:
-                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA200'], line=dict(color='gold', width=2), name='SMA 200'))
+                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA200'], line=dict(color='gold', width=2), name='SMA 200'), row=1, col=1)
                 if 'SMA50' in df_plot.columns:
-                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA50'], line=dict(color='cyan', width=1), name='SMA 50'))
-               
-                fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600, margin=dict(t=20, b=20, l=20, r=20))
+                    fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA50'], line=dict(color='cyan', width=1), name='SMA 50'), row=1, col=1)
+                fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='orange'), row=2, col=1)
+                fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=650, margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Execute scan sweeps to display charting visuals.")
 
     with tab3:
         st.header("🔬 Institutional Factor Screen Layer")
@@ -394,19 +370,29 @@ if check_password():
         else:
             st.info("Execute scanner sweeps to populate the blue sky momentum breakout matrices.")
 
+    # --- TAB 5: UPGRADED TRI-WHALE CONVICTION NETWORK ENGINE ---
     with tab5:
         st.header("👥 Institutional Whale Conviction Matrix Map")
+        st.write("Cross-referencing your terminal's real-time momentum velocity formulas with public high-conviction structural profiles [INDEX].")
+       
+        # Hardcoding the foundational asset matrix arrays, now integrating Berkshire Hathaway allocations
         network_data = [
+            # Berkshire Hathaway / Warren Buffett Value Compounder Core
             {"Ticker": "AAPL", "Investor Entity": "Berkshire Hathaway", "Macro Thesis Sector": "High-Margin Consumer Ecosystem Dominance", "Allocation Tier": "Primary Core Asset"},
             {"Ticker": "OXY", "Investor Entity": "Berkshire Hathaway", "Macro Thesis Sector": "Domestic Permian Basin Energy Assets & Carbon Capture", "Allocation Tier": "Strategic Acquisition Block"},
             {"Ticker": "BAC", "Investor Entity": "Berkshire Hathaway", "Macro Thesis Sector": "Systemically Important Defensive Banking Infrastructure", "Allocation Tier": "Value Yield Engine"},
+           
+            # Michael Burry / Scion Asset Management High Conviction Structure
             {"Ticker": "PHYS", "Investor Entity": "Michael Burry (Scion)", "Macro Thesis Sector": "Physical Gold Bullion / Inflation Hedge", "Allocation Tier": "Primary Core Asset"},
             {"Ticker": "CYBR", "Investor Entity": "Michael Burry (Scion)", "Macro Thesis Sector": "Enterprise Cybersecurity & Cloud Defence", "Allocation Tier": "Tactical Growth"},
             {"Ticker": "GNK", "Investor Entity": "Michael Burry (Scion)", "Macro Thesis Sector": "Dry Bulk Marine Commodity Shipping", "Allocation Tier": "Asymmetric Cyclical"},
+           
+            # Leopold Aschenbrenner Structural Scaling Thesis Structure
             {"Ticker": "MSFT", "Investor Entity": "L. Aschenbrenner Thesis", "Macro Thesis Sector": "Frontier Compute Labs & LLM Cores", "Allocation Tier": "Primary Core Asset"},
             {"Ticker": "NVDA", "Investor Entity": "L. Aschenbrenner Thesis", "Macro Thesis Sector": "GPU Hardware Acceleration Compute Infrastructure", "Allocation Tier": "Primary Core Asset"},
             {"Ticker": "CEG", "Investor Entity": "L. Aschenbrenner Thesis", "Macro Thesis Sector": "Nuclear Energy Grid Scaling & Dedicated Data Center Sourcing", "Allocation Tier": "Satellite Alpha Layer"}
         ]
+       
         df_network = pd.DataFrame(network_data)
        
         if not st.session_state.results.empty:
@@ -417,8 +403,10 @@ if check_password():
                 if not live_matrix_match.empty:
                     live_matrix_match = live_matrix_match[["Ticker", "Price", "Score", "Action", "Horizon Allocation", "xVOL Velocity", "RSI", "Ext%", "Initial Stop Floor", "Take Profit Target"]]
                     final_mapped_network_df = pd.merge(df_network, live_matrix_match, on="Ticker", how="inner")
+                   
                     st.success(f"🎯 Successfully Mapped {len(final_mapped_network_df)} Whale Conviction Positions With Live Breakout Parameters")
                     st.dataframe(final_mapped_network_df, use_container_width=True, hide_index=True)
+                   
                     st.write("---")
                     st.subheader("💡 Portfolio Convergence Stance Advisor")
                     for _, row in final_mapped_network_df.iterrows():
@@ -428,16 +416,3 @@ if check_password():
                     st.warning("To link live terminal matrix data into this tab, paste **NVDA, MSFT, CEG, PHYS, CYBR, GNK, AAPL, OXY, BAC** into your sidebar text area and execute the scan.")
         else:
             st.info("Execute your primary sidebar velocity scanner sweep to populate real-time investor metrics.")
-
-    # --- TAB 6: NEW HIGH-BETA SWINGS ENVIRONMENT ---
-    with tab6:
-        st.header("🔥 High-Velocity Short-Term New Swings")
-        st.warning("⚠️ RISK WARNING: This scanning feed uses a highly aggressive 20-day historical history gate cutoff limit. Signals generated here are sensitive to extreme momentum volatility and you may be buying at the absolute structural peak of a short term trend.")
-       
-        if not st.session_state.results_new_swings.empty:
-            st.subheader(f"Aggressive Breakout Capture Grid (Sorted by {sort_by})")
-            exclude_internal_ns = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop", "Base_Duration_Days", "Holding_Horizon_Guide"]
-            display_cols_ns = [c for c in st.session_state.results_new_swings.columns if c not in exclude_internal_ns]
-            st.dataframe(st.session_state.results_new_swings[display_cols_ns], use_container_width=True, hide_index=True)
-        else:
-            st.info("Execute scanner sweeps to track pipeline data.")
