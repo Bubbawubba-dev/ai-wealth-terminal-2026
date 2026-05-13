@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v9.2", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v10.1", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -49,7 +49,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (LOOSENED EXTENSION MOMENTUM SPECIFICATION) ---
+# --- 4. ANALYTICS ENGINE (LOOSENED PARAMETERS & INTEGRATED METRICS) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
         if df is None or len(df) < 30:
@@ -114,7 +114,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if rsi > 82 or dist_from_sma50 > 0.35: zacks_score += 1
         zacks_rank = int(max(1, min(5, zacks_score)))
 
-        # --- REVISED MOMENTUM SCORING MATRIX ---
+        # Technical Scoring Matrix
         score = 0
         is_above_sma200 = price > sma200 if has_macro_history else True
         if is_above_sma200: score += 3  
@@ -123,22 +123,17 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if xvol >= 4.0: score += 4  
         elif xvol >= 2.0: score += 2  
        
-        # MODIFIED: Loosened ceiling constraint wall from 40% to 55%, softened penalty to -2
         if dist_from_sma50 > 0.55:
             score -= 2  
            
-        # Standard Rules Overrides
         base_status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
        
-        # MODIFIED: Shifted acceptable extension threshold block boundary to 50%
         if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.50:
             base_status = "🔥 BUY"
             reason = "Explosive Volume Breakout Run"
 
         vol_is_drying_up = float(curr['Volume']) < df['Volume'].tail(5).mean()
-       
-        # MODIFIED: Intercept fence logic aligned to modern 50% extension envelope parameters
         is_overextended = dist_from_sma50 > 0.50
         has_broken_out_5d = price >= suggested_entry
 
@@ -176,18 +171,15 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         # Trend Horizon Calculator Engine
         base_days = 0
         holding_guide = "⚡ DAY TRADE ONLY"
-       
         try:
             local_high_boundary = high_52w * 0.88
             history_slice_len = min(len(df), 90)
             historical_closes = df['Close'].tail(history_slice_len).tolist()
-           
             for p_close in reversed(historical_closes):
                 if p_close >= local_high_boundary:
                     base_days += 1
                 else:
                     break
-                   
             if has_macro_history and sma50 > sma200 and price > sma200:
                 if base_days >= 45:
                     holding_guide = "🐋 CORE MACRO HOLD (Months)"
@@ -217,10 +209,10 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         }
     except:
         return None
-        
+
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v9.2")
+    st.title("🐋 Institutional Micro-Cap Terminal v10.1")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -233,7 +225,8 @@ if check_password():
         feed_mode = st.radio("Active Engine Feed Source", ["Scrape Automated Micro-Cap Index 🚀", "Manual Watchlist Tickers 📋"])
        
         if "Manual Watchlist Tickers 📋" in feed_mode:
-            user_input = st.text_area("Watchlist Input", "MRAM,ASTS,HIMS,QUBT,BZFD")
+            # Preloaded macro trackers for Tab 5 multi-whale sync validation sweeps
+            user_input = st.text_area("Watchlist Input", "MRAM,ASTS,HIMS,QUBT,NVDA,MSFT,CEG,PHYS,CYBR,GNK,AAPL,OXY,BAC")
             t_list = [t.strip().upper() for t in user_input.split(",") if t.strip()]
         else:
             with st.spinner("Scraping index..."):
@@ -267,30 +260,27 @@ if check_password():
                
         if res_list:
             raw_df = pd.DataFrame(res_list)
-           
-            # FIXED DATA CLEANSE PIPELINE: Safeguards text string operations with clean .get() boundaries
             raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_df.columns else 1.0
             raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float) if 'Ext%' in raw_df.columns else 0.0
             raw_df['Score_num'] = raw_df['Score_Internal_Num'].astype(int) if 'Score_Internal_Num' in raw_df.columns else 0
            
-            sort_map = {
-                "Volume Velocity (xVOL)": "RVOL_num",
-                "Extension Level (Ext%)": "Ext_num",
-                "Technical Score": "Score_num"
-            }
-           
+            sort_map = {"Volume Velocity (xVOL)": "RVOL_num", "Extension Level (Ext%)": "Ext_num", "Technical Score": "Score_num"}
             target_column = sort_map.get(sort_by, "RVOL_num")
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
-           
-            # Drops internal configuration metadata safely before table generation
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
         else:
             st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- FOUR-TAB PLATFORM NAVIGATION ---
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix", "🌌 Blue Sky Finder"])
+    # --- TAB LIST LAYOUT REFACTOR ---
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📋 Execution Dashboard",
+        "📈 Technical Visualizer Canvas",
+        "🔬 Research Wizard Matrix",
+        "🌌 Blue Sky Finder",
+        "👥 Investor Alpha Network"
+    ])
    
     with tab1:
         st.subheader(f"Micro-Cap Breakout Execution Matrix (Sorted by {sort_by})")
@@ -317,8 +307,6 @@ if check_password():
                 fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='orange'), row=2, col=1)
                 fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=650, margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Execute scan sweeps to display charting visuals.")
 
     with tab3:
         st.header("🔬 Institutional Factor Screen Layer")
@@ -357,15 +345,10 @@ if check_password():
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
-    # --- TAB 4: THE OPERATIONAL BLUE SKY ENGINE ---
     with tab4:
         st.header("🌌 Blue Sky Breakout Engine")
-        st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Volume Velocity Validation (xVOL >= 1.5x)")
-       
         if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
             df_sky = st.session_state.results.copy()
-           
-            # FIXED CONSTRAINTS DETECTOR: Relies strictly on the new pre-computed float metrics
             df_sky['RVOL_num'] = df_sky['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
            
             gate_proximity = df_sky['Ratio_52W_Raw'] >= 0.96
@@ -375,20 +358,7 @@ if check_password():
             if not passed_sky.empty:
                 st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
-               
-                st.dataframe(
-                    passed_sky[[
-                        "Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide",
-                        "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"
-                    ]].rename(columns={
-                        "Base_Duration_Days": "Accumulation Base (Days)",
-                        "Holding_Horizon_Guide": "Strategic Holding Guide",
-                        "DT_Trigger": "DayTrade Action",
-                        "DT_Target": "Intraday Profit Target",
-                        "DT_Stop": "Tight Intraday Stop"
-                    }),
-                    use_container_width=True, hide_index=True
-                )
+                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"Base_Duration_Days": "Accumulation Base (Days)", "Holding_Horizon_Guide": "Strategic Holding Guide", "DT_Trigger": "DayTrade Action", "DT_Target": "Intraday Profit Target", "DT_Stop": "Tight Intraday Stop"}), use_container_width=True, hide_index=True)
                 st.write("---")
                 st.subheader("Visualising Blue Sky Margin vs Proximity Cluster Matrix")
                 fig_sky = go.Figure()
@@ -399,3 +369,50 @@ if check_password():
                 st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate and volume velocity set.")
         else:
             st.info("Execute scanner sweeps to populate the blue sky momentum breakout matrices.")
+
+    # --- TAB 5: UPGRADED TRI-WHALE CONVICTION NETWORK ENGINE ---
+    with tab5:
+        st.header("👥 Institutional Whale Conviction Matrix Map")
+        st.write("Cross-referencing your terminal's real-time momentum velocity formulas with public high-conviction structural profiles [INDEX].")
+       
+        # Hardcoding the foundational asset matrix arrays, now integrating Berkshire Hathaway allocations
+        network_data = [
+            # Berkshire Hathaway / Warren Buffett Value Compounder Core
+            {"Ticker": "AAPL", "Investor Entity": "Berkshire Hathaway", "Macro Thesis Sector": "High-Margin Consumer Ecosystem Dominance", "Allocation Tier": "Primary Core Asset"},
+            {"Ticker": "OXY", "Investor Entity": "Berkshire Hathaway", "Macro Thesis Sector": "Domestic Permian Basin Energy Assets & Carbon Capture", "Allocation Tier": "Strategic Acquisition Block"},
+            {"Ticker": "BAC", "Investor Entity": "Berkshire Hathaway", "Macro Thesis Sector": "Systemically Important Defensive Banking Infrastructure", "Allocation Tier": "Value Yield Engine"},
+           
+            # Michael Burry / Scion Asset Management High Conviction Structure
+            {"Ticker": "PHYS", "Investor Entity": "Michael Burry (Scion)", "Macro Thesis Sector": "Physical Gold Bullion / Inflation Hedge", "Allocation Tier": "Primary Core Asset"},
+            {"Ticker": "CYBR", "Investor Entity": "Michael Burry (Scion)", "Macro Thesis Sector": "Enterprise Cybersecurity & Cloud Defence", "Allocation Tier": "Tactical Growth"},
+            {"Ticker": "GNK", "Investor Entity": "Michael Burry (Scion)", "Macro Thesis Sector": "Dry Bulk Marine Commodity Shipping", "Allocation Tier": "Asymmetric Cyclical"},
+           
+            # Leopold Aschenbrenner Structural Scaling Thesis Structure
+            {"Ticker": "MSFT", "Investor Entity": "L. Aschenbrenner Thesis", "Macro Thesis Sector": "Frontier Compute Labs & LLM Cores", "Allocation Tier": "Primary Core Asset"},
+            {"Ticker": "NVDA", "Investor Entity": "L. Aschenbrenner Thesis", "Macro Thesis Sector": "GPU Hardware Acceleration Compute Infrastructure", "Allocation Tier": "Primary Core Asset"},
+            {"Ticker": "CEG", "Investor Entity": "L. Aschenbrenner Thesis", "Macro Thesis Sector": "Nuclear Energy Grid Scaling & Dedicated Data Center Sourcing", "Allocation Tier": "Satellite Alpha Layer"}
+        ]
+       
+        df_network = pd.DataFrame(network_data)
+       
+        if not st.session_state.results.empty:
+            with st.spinner("Executing real-time overlay matrix mappings..."):
+                target_tickers = df_network["Ticker"].tolist()
+                live_matrix_match = st.session_state.results[st.session_state.results["Ticker"].isin(target_tickers)].copy()
+               
+                if not live_matrix_match.empty:
+                    live_matrix_match = live_matrix_match[["Ticker", "Price", "Score", "Action", "Horizon Allocation", "xVOL Velocity", "RSI", "Ext%", "Initial Stop Floor", "Take Profit Target"]]
+                    final_mapped_network_df = pd.merge(df_network, live_matrix_match, on="Ticker", how="inner")
+                   
+                    st.success(f"🎯 Successfully Mapped {len(final_mapped_network_df)} Whale Conviction Positions With Live Breakout Parameters")
+                    st.dataframe(final_mapped_network_df, use_container_width=True, hide_index=True)
+                   
+                    st.write("---")
+                    st.subheader("💡 Portfolio Convergence Stance Advisor")
+                    for _, row in final_mapped_network_df.iterrows():
+                        if "ACTIVE" in str(row["Action"]) or "BUY" in str(row["Action"]):
+                            st.info(f"⚡ **{row['Ticker']}** ({row['Investor Entity']}): Technical breakout matches whale long-term structural tailwinds. Trading Stance: **{row['Horizon Allocation']}** | Take Profit Lock: **{row['Take Profit Target']}**.")
+                else:
+                    st.warning("To link live terminal matrix data into this tab, paste **NVDA, MSFT, CEG, PHYS, CYBR, GNK, AAPL, OXY, BAC** into your sidebar text area and execute the scan.")
+        else:
+            st.info("Execute your primary sidebar velocity scanner sweep to populate real-time investor metrics.")
