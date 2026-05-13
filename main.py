@@ -38,7 +38,7 @@ def check_password():
     return True
 
 # --- 4. ANALYTICS ENGINE (STRICT VERSION) ---
-def analyze_stock(symbol, df, info, funds, risk):
+def analyze_stock(symbol, df, info, funds, risk, info=None):
     try:
         if len(df) < 200: return None
        
@@ -107,7 +107,7 @@ if check_password():
                     ticker_data = bulk_df[t].copy() if len(t_list) > 1 else bulk_df.copy()
                 if isinstance(ticker_data.columns, pd.MultiIndex):
                     ticker_data.columns = ticker_data.columns.get_level_values(0)
-            res = analyze_stock(t, ticker_data, yf.Ticker(t).info, funds, risk)
+            res = analyze_stock(t, ticker_data, funds, risk)
             if res: 
                 res_list.append(res)
 except Exception as e:
