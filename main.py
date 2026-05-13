@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v11.0", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v11.1", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -22,7 +22,7 @@ def get_micro_cap_universe():
             df.columns = [str(c).strip() for c in df.columns]
             col_candidates = [col for col in df.columns if any(x in col.upper() for x in ['TICKER', 'SYMBOL'])]
             if col_candidates:
-                target_col = col_candidates[0]
+                target_col = col_candidates
                 tickers = df[target_col].dropna().astype(str).tolist()
                 clean_tickers = []
                 for t in tickers:
@@ -49,7 +49,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (DEFENSIVE CORE SETUP) ---
+# --- 4. ANALYTICS ENGINE ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, min_history_required):
     try:
         if df is None or len(df) < min_history_required:
@@ -196,7 +196,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, min_history_required):
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v11.0")
+    st.title("🐋 Institutional Micro-Cap Terminal v11.1")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -237,17 +237,14 @@ if check_password():
                         ticker_data.columns = ticker_data.columns.get_level_values(0)
                     clean_ticker_data[t] = ticker_data
                    
-                    # Core Processing Layer
                     res_strict = analyze_stock(t, ticker_data, ticker_obj, funds, risk, min_history_required=60)
                     if res_strict: res_list_strict.append(res_strict)
                    
-                    # New Swings Processing Layer
                     res_swings = analyze_stock(t, ticker_data, ticker_obj, funds, risk, min_history_required=20)
                     if res_swings: res_list_new_swings.append(res_swings)
             except:
                 pass
                
-        # Base DataFrame generation for strict data
         if res_list_strict:
             raw_df = pd.DataFrame(res_list_strict)
             raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_df.columns else 1.0
@@ -259,9 +256,8 @@ if check_password():
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
         else:
-            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
+            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop", "Take Profit Target", "Sizing"])
 
-        # Base DataFrame generation for New Swings
         if res_list_new_swings:
             raw_swings_df = pd.DataFrame(res_list_new_swings)
             raw_swings_df['RVOL_num'] = raw_swings_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_swings_df.columns else 1.0
@@ -272,7 +268,7 @@ if check_password():
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- 6-TAB MATRIX NAVIGATION ---
+    # --- 6-TAB ENVIRONMENT NAV PANELS ---
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📋 Execution Dashboard",
         "📈 Technical Visualizer Canvas",
@@ -284,14 +280,15 @@ if check_password():
    
     with tab1:
         st.subheader(f"Micro-Cap Breakout Execution Matrix (Sorted by {sort_by})")
+        # FIXED INDENTATION LOGIC: Isolated frame mapping with clear syntax alignment properties
         if not st.session_state.results.empty:
             exclude_internal = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop", "Base_Duration_Days", "Holding_Horizon_Guide"]
-            display_cols = [c for c in st.session_state.results.columns if c in display_cols or c not in exclude_internal]
+            display_cols = [c for c in st.session_state.results.columns if c not in exclude_internal]
             st.dataframe(st.session_state.results[display_cols], use_container_width=True, hide_index=True)
         else:
             st.info("Execute scanner sweeps to track pipeline data.")
 
-        with tab2:
+    with tab2:
         valid_selections = [t for t in t_list if t in st.session_state.bulk_data]
         if valid_selections:
             sel = st.radio("Asset Pivot View:", valid_selections, horizontal=True)
@@ -299,17 +296,15 @@ if check_password():
                 df_plot = st.session_state.bulk_data[sel].copy()
                 df_plot.index = pd.to_datetime(df_plot.index)
                
-                # FIXED: Corrected dictionary syntax declaration mapping for the multi-axis canvas grid
+                # FIXED SYNTAX MAP: Standardised Plotly secondary axis dictionary definitions to clear function array bugs
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                
-                # Plot price series components on primary y-axis
                 fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), secondary_y=False)
                 if 'SMA200' in df_plot.columns:
                     fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA200'], line=dict(color='gold', width=2), name='SMA 200'), secondary_y=False)
                 if 'SMA50' in df_plot.columns:
                     fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA50'], line=dict(color='cyan', width=1), name='SMA 50'), secondary_y=False)
                
-                # Plot continuous volume trace on secondary y-axis
                 fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['Volume'], line=dict(color='rgba(255, 165, 0, 0.6)', width=1.5), name='Volume Tracking'), secondary_y=True)
                
                 fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=600, margin=dict(t=20, b=20, l=20, r=20))
@@ -397,9 +392,8 @@ if check_password():
                 final_mapped_network_df = pd.merge(df_network, live_matrix_match, on="Ticker", how="inner")
                 st.dataframe(final_mapped_network_df, use_container_width=True, hide_index=True)
 
-    # --- TAB 6: NEW SWINGS AGGRESSIVE ENVIRONMENT ---
     with tab6:
-        st.header("🔥 Aggressive Momentum Momentum Playground")
+        st.header("🔥 Aggressive Momentum Playground")
         st.warning("⚠️ RISK NOTICE: This workspace runs a short 20-day historical data gate. Highly volatile assets may report false breakout signals, meaning you might be buying at short-term price peaks.")
         if not st.session_state.new_swings_results.empty:
             exclude_swings = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "Score_Internal_Num"]
