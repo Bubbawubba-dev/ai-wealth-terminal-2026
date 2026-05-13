@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v5.2", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v5.3", layout="wide")
 
 # --- 2. SCRAPER ---
 def get_hot_picks():
@@ -42,7 +42,7 @@ def check_password():
 # --- 4. ANALYTICS ENGINE (WITH ANALYST FILTER OVERLAY) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
-        if df is None or len(df) < 50: # Lowered history requirement to capture new runners/gaps
+        if df is None or len(df) < 30: # Lowered requirements to capture short term velocity runners
             return None
        
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -139,7 +139,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
 
 # --- 5. DATA & UI ---
 if check_password():
-    st.title("🐋 Institutional Terminal v5.2")
+    st.title("🐋 Institutional Terminal v5.3")
    
     with st.sidebar:
         st.header("⚙️ Core Controls")
@@ -148,51 +148,44 @@ if check_password():
        
         st.write("---")
         st.header("🔍 Filter Feeds")
-        # Toggle options for handling a completely empty table
         enable_analyst_picks = st.checkbox("Enable Analyst Overlay Picks", value=True,
                                             help="Allows high-growth velocity stocks to print signals even if below long term 200 SMA lines.")
        
         mode = st.radio("Primary Ticker Feed", ["Watchlist", "Premarket Gainers / Hot Picks 🔥"])
        
-        # Embedded premarket analyst pick lists to choose from automatically
         premarket_analyst_picks = "MRAM,ASTS,HIMS,MU,TSLA,QUBT,BZFD"
-       
         user_input = st.text_area("Watchlist Tickers", "NVDA,AMD,HUT,SMCI,ARM")
        
         if mode == "Watchlist":
             t_list = [t.strip().upper() for t in user_input.split(",") if t.strip()]
         else:
-            # Merges Yahoo high volume tickers with trending high growth premarket picks
             t_list = list(set(get_hot_picks() + [t.strip().upper() for t in premarket_analyst_picks.split(",")]))
            
         run = st.button("🚀 RUN VELOCITY SCAN")
 
     if run or "results" not in st.session_state:
-        bulk_df = yf.download(t_list, period="2y", group_by='ticker', progress=False)
         res_list = []
         clean_ticker_data = {}
        
-        for t in t_list:
-            try:
-                if len(t_list) > 1:
-                    if t in bulk_df.columns.levels:
-                        ticker_data = bulk_df[t].copy()
-                    else:
-                        continue
-                else:
-                    ticker_data = bulk_df.copy()
-               
-                if isinstance(ticker_data.columns, pd.MultiIndex):
-                    ticker_data.columns = ticker_data.columns.get_level_values(0)
-               
-                clean_ticker_data[t] = ticker_data
-                ticker_obj = yf.Ticker(t)
-               
-                res = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks)
-                if res:
-                    res_list.append(res)
-            except:
-                pass
+        # FIXED: Replacing the broken bulk multi-index download download loop with a robust, isolated iterative downloader pipeline
+        with st.spinner("Downloading and processing real-time stock arrays..."):
+            for t in t_list:
+                try:
+                    ticker_obj = yf.Ticker(t)
+                    # Fetch data cleanly without multi-index nesting layouts
+                    ticker_data = ticker_obj.history(period="2y")
+                   
+                    if ticker_data is not None and not ticker_data.empty:
+                        # Clean column indexing explicitly
+                        if isinstance(ticker_data.columns, pd.MultiIndex):
+                            ticker_data.columns = ticker_data.columns.get_level_values(0)
+                       
+                        clean_ticker_data[t] = ticker_data
+                        res = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks)
+                        if res:
+                            res_list.append(res)
+                except Exception as e:
+                    pass # Isolated failures cannot take down the remaining ticker processing queue
                
         st.session_state.results = pd.DataFrame(res_list) if res_list else pd.DataFrame(columns=["Ticker", "Price", "Score", "Action"])
         st.session_state.bulk_data = clean_ticker_data
