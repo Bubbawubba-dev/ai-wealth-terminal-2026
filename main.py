@@ -251,8 +251,8 @@ if check_password():
         st.header("🔬 Institutional Factor Screen Layer")
         if not st.session_state.results.empty and "Chg_4W_Raw" in st.session_state.results.columns:
             df_wizard = st.session_state.results.copy()
-            f1 = (df_wizard['Chg_4W_Raw'] >= 0.10) & (df_wizard['Chg_4W_Raw'] <= 0.20)
-            f2 = df_wizard['Ratio_52W_Raw'] >= 0.90
+            f1 = (df_wizard['Chg_4W_Raw'] >= 0.10) & (df_wizard['Chg_4W_Raw'] <= 0.55)
+            f2 = df_wizard['Ratio_52W_Raw'] >= 0.60
            
             passed_stocks = df_wizard[f1 & f2].copy()
             failed_stocks = df_wizard[~(f1 & f2)].copy()
