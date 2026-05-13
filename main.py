@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v9.1", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v9.2", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -49,7 +49,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (DEFENSIVE FIX SYSTEM) ---
+# --- 4. ANALYTICS ENGINE (SYNCHRONIZED NUMERIC SCORES) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
         if df is None or len(df) < 30:
@@ -166,13 +166,12 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         daytrade_target = float(price + (atr * 1.5))
         daytrade_stop = float(price - (atr * 1.0))
 
-        # --- TREND HORIZON CALCULATOR ENGINE (DEFENSIVELY PATCHED) ---
+        # Trend Horizon Calculator Engine
         base_days = 0
         holding_guide = "⚡ DAY TRADE ONLY"
        
         try:
             local_high_boundary = high_52w * 0.88
-            # FIXED: Dynamically bound history slice length to protect against out-of-bounds array slicing crashes
             history_slice_len = min(len(df), 90)
             historical_closes = df['Close'].tail(history_slice_len).tolist()
            
@@ -206,16 +205,17 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
             "EPS_Revision_Delta": float(eps_revision_momentum),
             "Operating_Margin": operating_margin, "ROA": return_on_assets,
             "DT_Trigger": "ACTIVE" if has_broken_out_5d else "STAGED", "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2),
-            "Base_Duration_Days": int(base_days), "Holding_Horizon_Guide": holding_guide
+            "Base_Duration_Days": int(base_days), "Holding_Horizon_Guide": holding_guide,
+            # FIXED: Output clean internal integer column to prevent text-split errors in dataframe step
+            "Score_Internal_Num": int(score)
         }
     except:
         return None
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v9.1")
+    st.title("🐋 Institutional Micro-Cap Terminal v9.2")
    
-    # FIXED: Corrected lower-case naming convention bug for streaming runtime containers
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
         funds = st.number_input("Portfolio Target Deployment $", value=100000)
@@ -236,7 +236,7 @@ if check_password():
            
         st.write("---")
         st.header("📊 Breakout Ranking Priority")
-        sort_by = st.selectbox("Rank Breakout Priority By:", ["Volume Velocity (xVOL)", "Extension Level (Ext%)"])
+        sort_by = st.selectbox("Rank Breakout Priority By:", ["Volume Velocity (xVOL)", "Extension Level (Ext%)", "Technical Score"])
         sort_order = st.radio("Sort Order Direction:", ["Highest First 📈", "Lowest First 📉"])
         ascending_bool = sort_order == "Lowest First 📉"
        
@@ -261,19 +261,29 @@ if check_password():
                
         if res_list:
             raw_df = pd.DataFrame(res_list)
-            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
-            raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
            
-            sort_map = {"Volume Velocity (xVOL)": "RVOL_num", "Extension Level (Ext%)": "Ext_num"}
+            # FIXED DATA CLEANSE PIPELINE: Safeguards text string operations with clean .get() boundaries
+            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_df.columns else 1.0
+            raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float) if 'Ext%' in raw_df.columns else 0.0
+            raw_df['Score_num'] = raw_df['Score_Internal_Num'].astype(int) if 'Score_Internal_Num' in raw_df.columns else 0
+           
+            sort_map = {
+                "Volume Velocity (xVOL)": "RVOL_num",
+                "Extension Level (Ext%)": "Ext_num",
+                "Technical Score": "Score_num"
+            }
+           
             target_column = sort_map.get(sort_by, "RVOL_num")
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
-            st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num'], errors='ignore')
+           
+            # Drops internal configuration metadata safely before table generation
+            st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
         else:
             st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- FOUR-TAB PLAN NAVIGATION ---
+    # --- FOUR-TAB PLATFORM NAVIGATION ---
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix", "🌌 Blue Sky Finder"])
    
     with tab1:
@@ -348,6 +358,8 @@ if check_password():
        
         if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
             df_sky = st.session_state.results.copy()
+           
+            # FIXED CONSTRAINTS DETECTOR: Relies strictly on the new pre-computed float metrics
             df_sky['RVOL_num'] = df_sky['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
            
             gate_proximity = df_sky['Ratio_52W_Raw'] >= 0.96
