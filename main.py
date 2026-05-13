@@ -170,9 +170,9 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         return None
         
 
-# --- 5. DATA & UI ENVIRONMENT REFACTOR ---
+# --- 5. DATA & UI ENVIRONMENT (BREAKOUT SORTING REFACTOR) ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v5.5")
+    st.title("🐋 Institutional Micro-Cap Terminal v5.6")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -184,35 +184,43 @@ if check_password():
         enable_analyst_picks = st.checkbox("Enable Velocity Overlays", value=True,
                                             help="Allows high-growth micro-caps to print triggers based on short-term price momentum.")
        
-        # The new Automated Index Loop Toggle Option
         feed_mode = st.radio("Active Engine Feed Source", [
             "Scrape Automated Micro-Cap Index 🚀",
             "Manual Watchlist Tickers 📋"
         ])
        
         if "Manual Watchlist Tickers 📋" in feed_mode:
-            user_input = st.text_area("Watchlist Input", "NVDA,AMD,HUT,SMCI,ARM")
+            user_input = st.text_area("Watchlist Input", "MRAM,ASTS,HIMS,QUBT,BZFD,HUT,ARM")
             t_list = [t.strip().upper() for t in user_input.split(",") if t.strip()]
         else:
-            # Calls the index scraper loop automatically
             with st.spinner("Scraping real-time micro-cap index matrix components..."):
                 t_list = get_micro_cap_universe()
-           
-            # Displays the real-time list of scraped tickers inside the sidebar for verification
             st.info(f"Scraped Tickers Locked: {', '.join(t_list)}")
            
+        st.write("---")
+        st.header("📊 Institutional Sorting Engine")
+       
+        # NEW: Interactive dropdown to control breakout ranking priority
+        sort_by = st.selectbox("Rank Breakout Priority By:", [
+            "Technical Score",
+            "Volume Velocity (xVOL)",
+            "Momentum Velocity (RSI)",
+            "Extension Level (Ext%)"
+        ])
+       
+        sort_order = st.radio("Sort Order Direction:", ["Highest First 📈", "Lowest First 📉"])
+        ascending_bool = sort_order == "Lowest First 📉"
+       
         run = st.button("🚀 EXECUTE ALPHA VELOCITY SWEEP")
 
     if run or "results" not in st.session_state:
         res_list = []
         clean_ticker_data = {}
        
-        # Sequential pipeline wrapper loop
         with st.spinner("Streaming isolated price arrays..."):
             for t in t_list:
                 try:
                     ticker_obj = yf.Ticker(t)
-                    # Isolated daily processing context frames
                     ticker_data = ticker_obj.history(period="2y")
                    
                     if ticker_data is not None and not ticker_data.empty:
@@ -226,13 +234,38 @@ if check_password():
                 except:
                     pass
                
-        st.session_state.results = pd.DataFrame(res_list) if res_list else pd.DataFrame(columns=["Ticker", "Price", "Score", "Action"])
+        # Base DataFrame generation
+        if res_list:
+            raw_df = pd.DataFrame(res_list)
+           
+            # Data cleansing pipeline to ensure correct mathematical sorting
+            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].str.replace('x', '').astype(float)
+            raw_df['Ext_num'] = raw_df['Ext%'].str.replace('%', '').astype(float)
+            raw_df['Score_num'] = raw_df['Score'].str.split('/').str[0].astype(int)
+           
+            # NEW: Breakout Sorting Router Map
+            sort_map = {
+                "Technical Score": "Score_num",
+                "Volume Velocity (xVOL)": "RVOL_num",
+                "Momentum Velocity (RSI)": "RSI",
+                "Extension Level (Ext%)": "Ext_num"
+            }
+           
+            target_column = sort_map.get(sort_by, "Score_num")
+           
+            # Execute sorting operation and drop temporary columns
+            sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
+            st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num'])
+        else:
+            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Next Earnings", "Ext%", "RSI", "xVOL Velocity", "Entry", "Stop", "Sizing"])
+           
         st.session_state.bulk_data = clean_ticker_data
 
     tab1, tab2 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas"])
    
     with tab1:
-        st.subheader("Micro-Cap Momentum Tracking Sweep")
+        st.subheader(f"Micro-Cap Momentum Sweep (Sorted by {sort_by})")
+        # Render clean interactive data frame with sorting applied
         st.dataframe(st.session_state.results, use_container_width=True, hide_index=True)
 
     with tab2:
