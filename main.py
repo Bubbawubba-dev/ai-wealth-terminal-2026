@@ -108,7 +108,8 @@ if check_password():
                 if isinstance(ticker_data.columns, pd.MultiIndex):
                     ticker_data.columns = ticker_data.columns.get_level_values(0)
             res = analyze_stock(t, ticker_data, yf.Ticker(t).info, funds, risk)
-            if res: res_list.append(res)
+            if res: 
+                res_list.append(res)
 except Exception as e:
         st.error(f"Error processing {t}: {e}")
     
