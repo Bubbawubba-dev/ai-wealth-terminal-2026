@@ -38,7 +38,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (INSTITUTIONAL HIGH-GROWTH MOMENTUM VERSION) ---
+# --- 4. ANALYTICS ENGINE (HIGH-GROWTH MOMENTUM TECHNICAL VERSION) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk):
     try:
         if df is None or len(df) < 200:
@@ -48,21 +48,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
         if not all(col in df.columns for col in required_cols):
             return None
 
-        # --- 1. THE FUNDAMENTAL QUALITY GATE ---
-        # Fetching institutional growth metrics via yfinance info payload
-        info = ticker_obj.info if hasattr(ticker_obj, 'info') else {}
-        rev_growth = info.get('revenueGrowth', 0.0)  # Quarterly Revenue Growth (YoY)
-        roe = info.get('returnOnEquity', 0.0)        # Return on Equity
-       
-        # Coerce None values safely to numeric defaults
-        rev_growth = 0.0 if rev_growth is None else float(rev_growth)
-        roe = 0.0 if roe is None else float(roe)
-
-        # Strict Institutional Cutoffs: Require minimum 15% revenue growth and 10% ROE
-        if rev_growth < 0.15 or roe < 0.10:
-            return None
-
-        # --- 2. THE MATHEMATICAL MOMENTUM ENGINE ---
+        # --- 1. THE MATHEMATICAL MOMENTUM ENGINE ---
         df['SMA200'] = df['Close'].rolling(200).mean()
         df['SMA50'] = df['Close'].rolling(50).mean()
         delta = df['Close'].diff()
@@ -79,42 +65,71 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk):
        
         dist_from_sma50 = (price / sma50) - 1
         suggested_entry = df['High'].tail(5).max()
-        suggested_stop = price - (atr * 2.0) # Tightened risk multiplier from 2.5 to 2.0 for tight institutional stops
+        suggested_stop = price - (atr * 2.0) # Tight institutional stop
        
-        # --- 3. SCORING MATRIX ALLOCATION ---
+        # --- 2. SCORING MATRIX ALLOCATION ---
         score = 0
        
-        # Macro Trend Alignment (Mandatory for institutional long-only setups)
+        # Macro Trend Alignment (Long-Only Macro Filter)
         if price > sma200:
             score += 3  
         else:
-            return None # Immediate rejection if trading below long-term trend lines
+            return None # Rejects micro-cap down-trends immediately
 
-        # High Growth Momentum Sweet Spot
-        if 60 <= rsi <= 75:
-            score += 4  # Premium points for strong, established upward velocity
-        elif rsi > 75:
-            score -= 3  # Deduct points for entering short-term overextended areas
+        # High Growth Momentum Sweet Spot (The Power Zone)
+        if 60 <= rsi <= 78:
+            score += 4  # Strong upward velocity
+        elif rsi > 78:
+            score -= 3  # Deduct points for immediate short-term extension risk
 
         # Institutional Volume Inflows
         if rvol >= 2.5:
-            score += 3  # Exceptional conviction volume breakout
-        elif rvol >= 2.0:
-            score += 2  # Standard institutional breakout window
+            score += 3  # High volume breakout surge
+        elif rvol >= 1.5:
+            score += 2  # Active accumulation sweep
 
-        # Control Extensions (Avoid chasing vertical gap-ups)
-        if dist_from_sma50 > 0.25:    
+        # Control Extensions
+        if dist_from_sma50 > 0.35:    
             score -= 4  
            
-        # --- 4. ACTION ROUTING SYSTEM ---
+        # --- 3. ACTION ROUTING SYSTEM ---
         status = "🟡 MONITOR"
        
-        # Tightened execution rules: Requires a score of 8+, heavy institutional volume, and safe extension margins
-        if score >= 8 and rvol >= 2.0 and dist_from_sma50 < 0.22:
+        # Tightened execution rules: Requires a score of 6+ to bypass gate restrictions
+        if score >= 6 and rvol >= 1.5 and dist_from_sma50 < 0.30:
             status = "🔥 BUY"
         elif price <= suggested_stop:
             status = "🛑 STOP"
 
+        # --- 4. BINARY EVENT/EARNINGS SHIELD ---
+        earnings_date_str = "N/A"
+        try:
+            cal = ticker_obj.get_calendar() if hasattr(ticker_obj, 'get_calendar') else None
+            if cal is not None and 'Earnings Date' in cal:
+                next_earnings = cal['Earnings Date']
+                earnings_date_str = next_earnings.strftime('%Y-%m-%d')
+               
+                now = datetime.now(timezone.utc) if next_earnings.tzinfo else datetime.now()
+                days_to_earnings = (next_earnings - now).days
+               
+                if 0 <= days_to_earnings <= 5:
+                    if status == "🔥 BUY":
+                        status = "🟡 HOLD (EARNINGS RISK)"
+                    else:
+                        status = f"⚠️ EARNINGS ({status})"
+        except:
+            pass
+
+        return {
+            "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
+            "Action": status, "Next Earnings": earnings_date_str,
+            "Ext%": f"{dist_from_sma50*100:.1f}%", "RSI": int(rsi), "RVOL": f"{rvol:.1f}x",
+            "Entry": round(suggested_entry, 2), "Stop": round(suggested_stop, 2),
+            "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs"
+        }
+    except Exception as e:
+        return None
+        
         # --- 5. BINARY EVENT/EARNINGS SHIELD ---
         earnings_date_str = "N/A"
         try:
