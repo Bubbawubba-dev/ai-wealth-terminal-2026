@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import requests
 from plotly.subplots import make_subplots
 from datetime import datetime
 
@@ -19,8 +18,7 @@ def get_hot_picks():
         if df_list:
             df = df_list[0]
             return df['Symbol'].tolist()[:15]
-    except Exception as e:
-        st.sidebar.warning("Scraper failed using default list.")
+    except:
         return ["HUT", "AMD", "SMCI", "FLEX", "COMP", "VCYT", "VECO", "ARM", "IONQ", "PLTR"]
 
 # --- 3. SECURITY ---
@@ -38,7 +36,7 @@ def check_password():
     return True
 
 # --- 4. ANALYTICS ENGINE (STRICT VERSION) ---
-def analyze_stock(symbol, df, info, funds, risk, info=None):
+def analyze_stock(symbol, df, info, funds, risk):
     try:
         if len(df) < 200: return None
        
@@ -102,17 +100,11 @@ if check_password():
         bulk_df = yf.download(t_list, period="2y", group_by='ticker', progress=False)
         res_list = []
         for t in t_list:
-            try:
-                if len(t_list) > 1:
-                    ticker_data = bulk_df[t].copy() if len(t_list) > 1 else bulk_df.copy()
-                if isinstance(ticker_data.columns, pd.MultiIndex):
-                    ticker_data.columns = ticker_data.columns.get_level_values(0)
-            res = analyze_stock(t, ticker_data, funds, risk)
-            if res: 
-                res_list.append(res)
-except Exception as e:
-        st.error(f"Error processing {t}: {e}")
-    
+            ticker_data = bulk_df[t].copy() if len(t_list) > 1 else bulk_df.copy()
+            res = analyze_stock(t, ticker_data, yf.Ticker(t).info, funds, risk)
+            if res: res_list.append(res)
+        st.session_state.results = pd.DataFrame(res_list)
+        st.session_state.bulk_data = bulk_df
 
     tab1, tab2 = st.tabs(["📋 Execution", "📈 Indicators"])
    
