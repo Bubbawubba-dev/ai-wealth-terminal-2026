@@ -39,10 +39,10 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE (WITH ANALYST FILTER OVERLAY) ---
+# --- 4. ANALYTICS ENGINE (HORIZON CLASSIFICATION SPECIFICATION) ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
-        if df is None or len(df) < 30: # Lowered requirements to capture short term velocity runners
+        if df is None or len(df) < 30:
             return None
        
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -77,19 +77,16 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if is_above_sma200:
             score += 3  
 
-        # Growth Momentum Velocity (RSI Power Zone)
         if 60 <= rsi <= 78:
             score += 4  
         elif rsi > 78:
             score -= 2  
 
-        # Institutional Volume Breakthrough Confirmation
         if rvol >= 2.5:
             score += 3  
         elif rvol >= 1.5:
             score += 2  
 
-        # Extension Check
         if dist_from_sma50 > 0.35:    
             score -= 4  
            
@@ -97,19 +94,29 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
        
-        # Core Gate 1: Strict Institutional Buy Signalling
         if score >= 6 and rvol >= 1.5 and dist_from_sma50 < 0.30 and is_above_sma200:
             status = "🔥 BUY"
             reason = "Strict Institutional Breakout"
-           
-        # Core Gate 2: Secondary Analyst / Premarket Momentum Pick Overlay
         elif enable_analyst_picks and rvol >= 2.0 and 62 <= rsi <= 82 and dist_from_sma50 < 0.40:
             status = "🚀 ANALYST BUY"
             reason = "High Velocity Premarket / Intraday Gap" if rvol >= 3.0 else "Aggressive Momentum Pivot"
-           
         elif price <= suggested_stop:
             status = "🛑 STOP"
             reason = "Volatility Stop Hit"
+
+        # --- NEW: INVESTMENT HORIZON CLASSIFICATION MATRIX ---
+        horizon = "N/A"
+        if "BUY" in status:
+            # 1. Long-Term Hold (Golden Cross or High-Conviction Macro Uptrend)
+            if has_macro_history and sma50 > sma200 and price > sma200:
+                horizon = "💎 LONG-TERM HOLD"
+            # 2. Short-Term Hold (Velocity Rebound or Mean-Reversion Play below macro trendlines)
+            else:
+                horizon = "⚡ SHORT-TERM SWING"
+        elif status == "🛑 STOP":
+            horizon = "❌ EXIT POSITION"
+        else:
+            horizon = "⏳ WATCHLIST"
 
         # --- BINARY EVENT/EARNINGS SHIELD ---
         earnings_date_str = "N/A"
@@ -124,18 +131,28 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
                 if 0 <= days_to_earnings <= 5 and "BUY" in status:
                     status = "🟡 HOLD (EARNINGS RISK)"
                     reason = "Immediate Binary Risk Window"
+                    horizon = "⚡ RISK REDUCTION"
         except:
             pass
 
         return {
-            "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
-            "Action": status, "Trigger Reason": reason, "Next Earnings": earnings_date_str,
-            "Ext%": f"{dist_from_sma50*100:.1f}%", "RSI": int(rsi), "RVOL": f"{rvol:.1f}x",
-            "Entry": round(suggested_entry, 2), "Stop": round(suggested_stop, 2),
+            "Ticker": symbol,
+            "Price": round(price, 2),
+            "Score": f"{score}/10",
+            "Action": status,
+            "Horizon Allocation": horizon,  # Newly injected column field
+            "Trigger Reason": reason,
+            "Next Earnings": earnings_date_str,
+            "Ext%": f"{dist_from_sma50*100:.1f}%",
+            "RSI": int(rsi),
+            "RVOL": f"{rvol:.1f}x",
+            "Entry": round(suggested_entry, 2),
+            "Stop": round(suggested_stop, 2),
             "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs"
         }
     except Exception as e:
         return None
+        
 
 # --- 5. DATA & UI ---
 if check_password():
