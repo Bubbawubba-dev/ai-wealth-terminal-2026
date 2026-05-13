@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v7.0", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v7.2", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -140,7 +140,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         elif status == "🛑 STOP":
             horizon = "❌ EXIT POSITION"
 
-        # Intraday Day Trading Levels
         daytrade_target = float(price + (atr * 1.5))
         daytrade_stop = float(price - (atr * 1.0))
         daytrade_trigger = "Awaiting 5D High Cross"
@@ -155,7 +154,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
             "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs",
             "Chg_4W_Raw": float(chg_4w), "Ratio_52W_Raw": float(ratio_52w), "Zacks_Rank": int(zacks_rank),
             "EPS_Revision_Delta": float(eps_revision_momentum),
-            # New Financial & Day Trading parameters mapped directly into the core output dictionary
             "Operating_Margin": operating_margin, "ROA": return_on_assets,
             "DT_Trigger": daytrade_trigger, "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2)
         }
@@ -164,7 +162,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v7.0")
+    st.title("🐋 Institutional Micro-Cap Terminal v7.2")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -211,7 +209,8 @@ if check_password():
                
         if res_list:
             raw_df = pd.DataFrame(res_list)
-            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) >= 1.5 passed_sky = df_sky[gate_proximity & gate_fundamental].copy()
+            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
+            raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
            
             sort_map = {"Volume Velocity (xVOL)": "RVOL_num", "Extension Level (Ext%)": "Ext_num"}
             target_column = sort_map.get(sort_by, "RVOL_num")
@@ -222,13 +221,8 @@ if check_password():
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- FOUR-TAB PLATFORM MATRIX CONFIGURATION ---
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📋 Execution Dashboard",
-        "📈 Technical Visualizer Canvas",
-        "🔬 Research Wizard Matrix",
-        "🌌 Blue Sky Finder"
-    ])
+    # --- TAB NAVIGATION ---
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix", "🌌 Blue Sky Finder"])
    
     with tab1:
         st.subheader(f"Micro-Cap Momentum Sweep (Sorted by {sort_by})")
@@ -295,32 +289,30 @@ if check_password():
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
-    # NEW TAB 4: THE BLUE SKY EXECUTION ARCHITECTURE
+    # --- TAB 4: THE OPERATIONAL BLUE SKY ENGINE ---
     with tab4:
         st.header("🌌 Blue Sky Breakout Engine")
-        st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Operating Margins & ROA > 0% (Fundamental Strength Verification)")
+        st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Volume Velocity Validation (xVOL >= 1.5x)")
        
         if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
             df_sky = st.session_state.results.copy()
            
-            # Formulating the tight institutional dual-gate constraints
+            # FIXED: Re-built string-to-float column mapping vectors using clean, numeric fields
+            df_sky['RVOL_num'] = df_sky['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
+           
+            # FIXED SYNTAX MASK: Conditional rules evaluate clean pre-parsed float columns
             gate_proximity = df_sky['Ratio_52W_Raw'] >= 0.96
-            gate_fundamental = (df_sky['Operating_Margin'] > 0.0) & (df_sky['ROA'] > 0.0)
+            gate_fundamental = df_sky['RVOL_num'] >= 1.5
            
             passed_sky = df_sky[gate_proximity & gate_fundamental].copy()
            
             if not passed_sky.empty:
-                st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs with Positive Financials")
-               
-                # Format parameters cleanly for front-end presentation view layout
-                passed_sky['Operating Margin %'] = (passed_sky['Operating_Margin'] * 100).round(1).astype(str) + "%"
-                passed_sky['ROA %'] = (passed_sky['ROA'] * 100).round(1).astype(str) + "%"
+                st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs with Institutional Volume Confirmation")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
                
-                # Day Trading execution column routing layout grid matrix
                 st.dataframe(
                     passed_sky[[
-                        "Ticker", "Price", "52W High Proximity", "Operating Margin %", "ROA %",
+                        "Ticker", "Price", "52W High Proximity", "xVOL Velocity", "RSI",
                         "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"
                     ]].rename(columns={
                         "DT_Trigger": "DayTrade Action",
@@ -329,20 +321,13 @@ if check_password():
                     }),
                     use_container_width=True, hide_index=True
                 )
-               
-                # Micro Chart visualization profile of Blue Sky assets
                 st.write("---")
                 st.subheader("Visualising Blue Sky Margin vs Proximity Cluster Matrix")
                 fig_sky = go.Figure()
-                fig_sky.add_trace(go.Scatter(
-                    x=passed_sky['Ticker'], y=passed_sky['Ratio_52W_Raw'],
-                    mode='markers+text', text=passed_sky['Ticker'], textposition="top center",
-                    marker=dict(color='#00FFCC', size=15, symbol='star', line=dict(width=1, color='white')),
-                    name='Proximity Factor'
-                ))
+                fig_sky.add_trace(go.Scatter(x=passed_sky['Ticker'], y=passed_sky['Ratio_52W_Raw'], mode='markers+text', text=passed_sky['Ticker'], textposition="top center", marker=dict(color='#00FFCC', size=15, symbol='star', line=dict(width=1, color='white')), name='Proximity Factor'))
                 fig_sky.update_layout(template="plotly_dark", height=400, yaxis_title="52W High Proximity Ratio (Floor=0.96)", title="Locked Breakout Targets Cluster View")
                 st.plotly_chart(fig_sky, use_container_width=True)
             else:
-                st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate and positive fundamental parameter set.")
+                st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate and volume velocity set.")
         else:
-            st.info("Execute scanner sweeps to track blue sky momentum breakout matrices.")
+            st.info("Execute scanner sweeps to populate the blue sky momentum breakout matrices.")
