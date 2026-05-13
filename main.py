@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v6.2", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v7.0", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -59,6 +59,15 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if not all(col in df.columns for col in required_cols):
             return None
 
+        # Fetch Financial Parameters Safely
+        info = ticker_obj.info if hasattr(ticker_obj, 'info') else {}
+        operating_margin = info.get('operatingMargins', 0.0)
+        return_on_assets = info.get('returnOnAssets', 0.0)
+       
+        operating_margin = 0.0 if operating_margin is None else float(operating_margin)
+        return_on_assets = 0.0 if return_on_assets is None else float(return_on_assets)
+
+        # Technical Engine
         has_macro_history = len(df) >= 200
         df['SMA200'] = df['Close'].rolling(200).mean() if has_macro_history else df['Close'].mean()
         df['SMA50'] = df['Close'].rolling(50).mean() if len(df) >= 50 else df['Close'].mean()
@@ -80,10 +89,8 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         suggested_entry = float(df['High'].tail(5).max())
         suggested_stop = float(price - (atr * 1.8))
        
-        chg_4w = 0.0
-        if len(df) >= 21:
-            chg_4w = float((price / df['Close'].iloc[-21]) - 1.0)
-           
+        # Research Wizard Parameters
+        chg_4w = float((price / df['Close'].iloc[-21]) - 1.0) if len(df) >= 21 else 0.0
         high_52w = float(df['High'].tail(252).max() if len(df) >= 252 else df['High'].max())
         ratio_52w = float(price / high_52w if high_52w > 0 else 0.0)
 
@@ -133,6 +140,13 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         elif status == "🛑 STOP":
             horizon = "❌ EXIT POSITION"
 
+        # Intraday Day Trading Levels
+        daytrade_target = float(price + (atr * 1.5))
+        daytrade_stop = float(price - (atr * 1.0))
+        daytrade_trigger = "Awaiting 5D High Cross"
+        if price >= suggested_entry:
+            daytrade_trigger = "🚀 EXECUTE INTRADAY ENTRY"
+
         return {
             "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
             "Action": status, "Horizon Allocation": horizon, "Trigger Reason": reason,
@@ -140,14 +154,17 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
             "Entry": round(suggested_entry, 2), "Stop": round(suggested_stop, 2),
             "Sizing": f"{int((funds * risk)/(price - suggested_stop)) if (price-suggested_stop)>0 else 0} Shrs",
             "Chg_4W_Raw": float(chg_4w), "Ratio_52W_Raw": float(ratio_52w), "Zacks_Rank": int(zacks_rank),
-            "EPS_Revision_Delta": float(eps_revision_momentum)
+            "EPS_Revision_Delta": float(eps_revision_momentum),
+            # New Financial & Day Trading parameters mapped directly into the core output dictionary
+            "Operating_Margin": operating_margin, "ROA": return_on_assets,
+            "DT_Trigger": daytrade_trigger, "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2)
         }
     except:
         return None
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v6.2")
+    st.title("🐋 Institutional Micro-Cap Terminal v7.0")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -168,14 +185,8 @@ if check_password():
             st.info(f"Scraped Tickers Locked: {', '.join(t_list)}")
            
         st.write("---")
-        st.header("📊 Micro-Cap Breakout Sorting")
-       
-        # FIXED: Removed Technical Score and RSI sorting parameters to focus exclusively on Breakout Engines
-        sort_by = st.selectbox("Rank Breakout Priority By:", [
-            "Volume Velocity (xVOL)",
-            "Extension Level (Ext%)"
-        ], help="Volume Velocity captures sudden fund entry. Extension Level handles low-risk consolidation setups.")
-       
+        st.header("📊 Breakout Ranking Priority")
+        sort_by = st.selectbox("Rank Breakout Priority By:", ["Volume Velocity (xVOL)", "Extension Level (Ext%)"])
         sort_order = st.radio("Sort Order Direction:", ["Highest First 📈", "Lowest First 📉"])
         ascending_bool = sort_order == "Lowest First 📉"
        
@@ -203,11 +214,7 @@ if check_password():
             raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
             raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
            
-            sort_map = {
-                "Volume Velocity (xVOL)": "RVOL_num",
-                "Extension Level (Ext%)": "Ext_num"
-            }
-           
+            sort_map = {"Volume Velocity (xVOL)": "RVOL_num", "Extension Level (Ext%)": "Ext_num"}
             target_column = sort_map.get(sort_by, "RVOL_num")
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num'], errors='ignore')
@@ -216,13 +223,19 @@ if check_password():
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- THREE-TAB LAYOUT ---
-    tab1, tab2, tab3 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix"])
+    # --- FOUR-TAB PLATFORM MATRIX CONFIGURATION ---
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📋 Execution Dashboard",
+        "📈 Technical Visualizer Canvas",
+        "🔬 Research Wizard Matrix",
+        "🌌 Blue Sky Finder"
+    ])
    
     with tab1:
         st.subheader(f"Micro-Cap Momentum Sweep (Sorted by {sort_by})")
         if not st.session_state.results.empty:
-            display_cols = [c for c in st.session_state.results.columns if c not in ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta"]]
+            exclude_internal = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop"]
+            display_cols = [c for c in st.session_state.results.columns if c not in exclude_internal]
             st.dataframe(st.session_state.results[display_cols], use_container_width=True, hide_index=True)
         else:
             st.info("Execute scanner sweeps to track pipeline data.")
@@ -234,7 +247,6 @@ if check_password():
             if sel and sel in st.session_state.bulk_data:
                 df_plot = st.session_state.bulk_data[sel].copy()
                 df_plot.index = pd.to_datetime(df_plot.index)
-               
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
                 fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), row=1, col=1)
                 if 'SMA200' in df_plot.columns:
@@ -251,9 +263,8 @@ if check_password():
         st.header("🔬 Institutional Factor Screen Layer")
         if not st.session_state.results.empty and "Chg_4W_Raw" in st.session_state.results.columns:
             df_wizard = st.session_state.results.copy()
-            f1 = (df_wizard['Chg_4W_Raw'] >= 0.10) & (df_wizard['Chg_4W_Raw'] <= 0.55)
-            f2 = df_wizard['Ratio_52W_Raw'] >= 0.60
-           
+            f1 = (df_wizard['Chg_4W_Raw'] >= 0.10) & (df_wizard['Chg_4W_Raw'] <= 0.20)
+            f2 = df_wizard['Ratio_52W_Raw'] >= 0.90
             passed_stocks = df_wizard[f1 & f2].copy()
             failed_stocks = df_wizard[~(f1 & f2)].copy()
            
@@ -261,7 +272,6 @@ if check_password():
                 passed_stocks['4W % Change'] = (passed_stocks['Chg_4W_Raw'] * 100).round(2)
                 passed_stocks['Proximity to 52W High'] = passed_stocks['Ratio_52W_Raw'].round(3)
                 passed_stocks['Revision Delta %'] = (passed_stocks['EPS_Revision_Delta'] * 100).round(1)
-               
             if len(failed_stocks) > 0:
                 failed_stocks['4W % Change'] = (failed_stocks['Chg_4W_Raw'] * 100).round(2)
                 failed_stocks['Proximity to 52W High'] = failed_stocks['Ratio_52W_Raw'].round(3)
@@ -271,30 +281,69 @@ if check_password():
             with col_l:
                 st.subheader("Passed Strategic Screen")
                 if len(passed_stocks) > 0:
-                    st.success(f"🎯 {len(passed_stocks)} Assets Passed Wizard Parameters")
                     st.dataframe(passed_stocks[["Ticker", "Price", "4W % Change", "Proximity to 52W High", "Revision Delta %", "Zacks_Rank"]], use_container_width=True, hide_index=True)
                 else:
                     st.warning("No assets match all parameters simultaneously.")
-                st.write("---")
-                st.subheader("Excluded Scanned Tickers")
-                if len(failed_stocks) > 0:
-                    st.dataframe(failed_stocks[["Ticker", "Price", "4W % Change", "Proximity to 52W High", "Revision Delta %", "Zacks_Rank"]], use_container_width=True, hide_index=True)
-               
             with col_r:
                 st.subheader("Analyst Trend Matrix Visualization")
                 fig_wiz = make_subplots(specs=[[{"secondary_y": True}]])
                 if len(failed_stocks) > 0:
-                    fig_wiz.add_trace(go.Bar(x=failed_stocks['Ticker'], y=failed_stocks['Revision Delta %'].astype(float), name='Excluded: Revision Delta %', marker_color='rgba(255, 99, 132, 0.2)'), secondary_y=False)
+                    fig_wiz.add_trace(go.Bar(x=failed_stocks['Ticker'], y=failed_stocks['Revision Delta %'].astype(float), name='Excluded: Rev Delta', marker_color='rgba(255, 99, 132, 0.2)'), secondary_y=False)
                     fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='gray', size=8)), secondary_y=True)
                 if len(passed_stocks) > 0:
-                    fig_wiz.add_trace(go.Bar(x=passed_stocks['Ticker'], y=passed_stocks['Revision Delta %'].astype(float), name='PASSED: Revision Delta %', marker_color='#00FFCC'), secondary_y=False)
+                    fig_wiz.add_trace(go.Bar(x=passed_stocks['Ticker'], y=passed_stocks['Revision Delta %'].astype(float), name='PASSED: Rev Delta', marker_color='#00FFCC'), secondary_y=False)
                     fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FFCC00', size=14, symbol='diamond')), secondary_y=True)
-               
-                fig_wiz.add_hline(y=0.0, line_color="white", line_width=1, secondary_y=False)
-                fig_wiz.add_hline(y=0.90, line_dash="dash", line_color="orange", line_width=1.5, secondary_y=True)
-                fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker", legend=dict(orientation="h", y=1.02, x=1))
-                fig_wiz.update_yaxes(title_text="<b>EPS Revision Momentum Delta (%)</b>", color="#00FFCC", secondary_y=False)
-                fig_wiz.update_yaxes(title_text="<b>Current Price / 52W High Ratio</b>", color="#FFCC00", secondary_y=True)
+                fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
+
+    # NEW TAB 4: THE BLUE SKY EXECUTION ARCHITECTURE
+    with tab4:
+        st.header("🌌 Blue Sky Breakout Engine")
+        st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Operating Margins & ROA > 0% (Fundamental Strength Verification)")
+       
+        if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
+            df_sky = st.session_state.results.copy()
+           
+            # Formulating the tight institutional dual-gate constraints
+            gate_proximity = df_sky['Ratio_52W_Raw'] >= 0.96
+            gate_fundamental = (df_sky['Operating_Margin'] > 0.0) & (df_sky['ROA'] > 0.0)
+           
+            passed_sky = df_sky[gate_proximity & gate_fundamental].copy()
+           
+            if not passed_sky.empty:
+                st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs with Positive Financials")
+               
+                # Format parameters cleanly for front-end presentation view layout
+                passed_sky['Operating Margin %'] = (passed_sky['Operating_Margin'] * 100).round(1).astype(str) + "%"
+                passed_sky['ROA %'] = (passed_sky['ROA'] * 100).round(1).astype(str) + "%"
+                passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
+               
+                # Day Trading execution column routing layout grid matrix
+                st.dataframe(
+                    passed_sky[[
+                        "Ticker", "Price", "52W High Proximity", "Operating Margin %", "ROA %",
+                        "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"
+                    ]].rename(columns={
+                        "DT_Trigger": "DayTrade Action",
+                        "DT_Target": "Intraday Profit Target (Exit)",
+                        "DT_Stop": "Tight Intraday Stop (Cut)"
+                    }),
+                    use_container_width=True, hide_index=True
+                )
+               
+                # Micro Chart visualization profile of Blue Sky assets
+                st.write("---")
+                st.subheader("Visualising Blue Sky Margin vs Proximity Cluster Matrix")
+                fig_sky = go.Figure()
+                fig_sky.add_trace(go.Scatter(
+                    x=passed_sky['Ticker'], y=passed_sky['Ratio_52W_Raw'],
+                    mode='markers+text', text=passed_sky['Ticker'], textposition="top center",
+                    marker=dict(color='#00FFCC', size=15, symbol='star', line=dict(width=1, color='white')),
+                    name='Proximity Factor'
+                ))
+                fig_sky.update_layout(template="plotly_dark", height=400, yaxis_title="52W High Proximity Ratio (Floor=0.96)", title="Locked Breakout Targets Cluster View")
+                st.plotly_chart(fig_sky, use_container_width=True)
+            else:
+                st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate and positive fundamental parameter set.")
         else:
-            st.info("Execute scanner sweeps to populate the factor analysis canvas.")
+            st.info("Execute scanner sweeps to track blue sky momentum breakout matrices.")
