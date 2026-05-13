@@ -1,6 +1,6 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime
+streamlit>=1.35.0
+yfinance>=0.2.50
+pandas>=2.0.0
+plotly>=5.10.0
+requests>=2.31.0
+lxml>=4.9.0
