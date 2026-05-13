@@ -105,7 +105,7 @@ if check_password():
             try:
                 if len(t_list) > 1:
                     ticker_data = bulk_df[t].copy() if len(t_list) > 1 else bulk_df.copy()
-                if isinstance(ticker_data.columns, pd.MultiIndex1:
+                if isinstance(ticker_data.columns, pd.MultiIndex):
                     ticker_data.columns = ticker_data.columns.get_level_values(0)
             res = analyze_stock(t, ticker_data, yf.Ticker(t).info, funds, risk)
             if res: res_list.append(res)
