@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v6.1", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v6.2", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -19,9 +19,11 @@ def get_micro_cap_universe():
         response = requests.get(url, headers=headers, timeout=10)
         df_list = pd.read_html(response.text)
         for df in df_list:
-            if any('Ticker' in str(col) or 'Symbol' in str(col) for col in df.columns):
-                col_name = [col for col in df.columns if 'Ticker' in str(col) or 'Symbol' in str(col)][0]
-                tickers = df[col_name].dropna().astype(str).tolist()
+            df.columns = [str(c).strip() for c in df.columns]
+            col_candidates = [col for col in df.columns if any(x in col.upper() for x in ['TICKER', 'SYMBOL'])]
+            if col_candidates:
+                target_col = col_candidates[0]
+                tickers = df[target_col].dropna().astype(str).tolist()
                 clean_tickers = []
                 for t in tickers:
                     token = t.split(':')[-1].replace(')', '').strip().upper()
@@ -57,7 +59,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if not all(col in df.columns for col in required_cols):
             return None
 
-        # Technical Calculations
         has_macro_history = len(df) >= 200
         df['SMA200'] = df['Close'].rolling(200).mean() if has_macro_history else df['Close'].mean()
         df['SMA50'] = df['Close'].rolling(50).mean() if len(df) >= 50 else df['Close'].mean()
@@ -79,7 +80,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         suggested_entry = float(df['High'].tail(5).max())
         suggested_stop = float(price - (atr * 1.8))
        
-        # Research Wizard Performance Factors
         chg_4w = 0.0
         if len(df) >= 21:
             chg_4w = float((price / df['Close'].iloc[-21]) - 1.0)
@@ -87,7 +87,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         high_52w = float(df['High'].tail(252).max() if len(df) >= 252 else df['High'].max())
         ratio_52w = float(price / high_52w if high_52w > 0 else 0.0)
 
-        # Core Earnings Revision Pipeline Frame
         eps_revision_momentum = 0.0
         try:
             earn_hist = ticker_obj.get_earnings_history() if hasattr(ticker_obj, 'get_earnings_history') else None
@@ -102,7 +101,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         except:
             pass
 
-        # High Conviction Scoring Layout
         zacks_score = 3
         if rsi >= 65 and xvol >= 2.0: zacks_score -= 1
         if eps_revision_momentum > 0.05: zacks_score -= 1  
@@ -119,7 +117,6 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         elif xvol >= 2.0: score += 2  
         if dist_from_sma50 > 0.40: score -= 4  
            
-        # Action Core States Routing
         status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
        
@@ -150,7 +147,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v6.1")
+    st.title("🐋 Institutional Micro-Cap Terminal v6.2")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -171,8 +168,14 @@ if check_password():
             st.info(f"Scraped Tickers Locked: {', '.join(t_list)}")
            
         st.write("---")
-        st.header("📊 Institutional Sorting Engine")
-        sort_by = st.selectbox("Rank Breakout Priority By:", ["Technical Score", "Volume Velocity (xVOL)", "Momentum Velocity (RSI)", "Extension Level (Ext%)"])
+        st.header("📊 Micro-Cap Breakout Sorting")
+       
+        # FIXED: Removed Technical Score and RSI sorting parameters to focus exclusively on Breakout Engines
+        sort_by = st.selectbox("Rank Breakout Priority By:", [
+            "Volume Velocity (xVOL)",
+            "Extension Level (Ext%)"
+        ], help="Volume Velocity captures sudden fund entry. Extension Level handles low-risk consolidation setups.")
+       
         sort_order = st.radio("Sort Order Direction:", ["Highest First 📈", "Lowest First 📉"])
         ascending_bool = sort_order == "Lowest First 📉"
        
@@ -199,24 +202,21 @@ if check_password():
             raw_df = pd.DataFrame(res_list)
             raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
             raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
-            raw_df['Score_num'] = raw_df['Score'].astype(str).str.split('/').str.get(0).astype(int)
            
             sort_map = {
-                "Technical Score": "Score_num",
                 "Volume Velocity (xVOL)": "RVOL_num",
-                "Momentum Velocity (RSI)": "RSI",
                 "Extension Level (Ext%)": "Ext_num"
             }
            
-            target_column = sort_map.get(sort_by, "Score_num")
+            target_column = sort_map.get(sort_by, "RVOL_num")
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
-            st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num'], errors='ignore')
+            st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num'], errors='ignore')
         else:
             st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- THREE-TAB ERROR SHIELDED LAYOUT ---
+    # --- THREE-TAB LAYOUT ---
     tab1, tab2, tab3 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix"])
    
     with tab1:
@@ -233,8 +233,6 @@ if check_password():
             sel = st.radio("Asset Pivot View:", valid_selections, horizontal=True)
             if sel and sel in st.session_state.bulk_data:
                 df_plot = st.session_state.bulk_data[sel].copy()
-               
-                # FIXED: Force datetime conversion explicitly on layout indices to remove trace coordinate mismatches
                 df_plot.index = pd.to_datetime(df_plot.index)
                
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.05)
@@ -253,15 +251,12 @@ if check_password():
         st.header("🔬 Institutional Factor Screen Layer")
         if not st.session_state.results.empty and "Chg_4W_Raw" in st.session_state.results.columns:
             df_wizard = st.session_state.results.copy()
-           
-            # Formulating strict screening slices
             f1 = (df_wizard['Chg_4W_Raw'] >= 0.10) & (df_wizard['Chg_4W_Raw'] <= 0.20)
             f2 = df_wizard['Ratio_52W_Raw'] >= 0.90
            
             passed_stocks = df_wizard[f1 & f2].copy()
             failed_stocks = df_wizard[~(f1 & f2)].copy()
            
-            # FIXED: Wrapped mapping updates in condition boundaries to prevent empty frame AttributeError crashes
             if len(passed_stocks) > 0:
                 passed_stocks['4W % Change'] = (passed_stocks['Chg_4W_Raw'] * 100).round(2)
                 passed_stocks['Proximity to 52W High'] = passed_stocks['Ratio_52W_Raw'].round(3)
@@ -288,8 +283,6 @@ if check_password():
             with col_r:
                 st.subheader("Analyst Trend Matrix Visualization")
                 fig_wiz = make_subplots(specs=[[{"secondary_y": True}]])
-               
-                # FIXED: Enforced structured value series verification loops to skip empty plotting steps smoothly
                 if len(failed_stocks) > 0:
                     fig_wiz.add_trace(go.Bar(x=failed_stocks['Ticker'], y=failed_stocks['Revision Delta %'].astype(float), name='Excluded: Revision Delta %', marker_color='rgba(255, 99, 132, 0.2)'), secondary_y=False)
                     fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='gray', size=8)), secondary_y=True)
