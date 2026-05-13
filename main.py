@@ -8,7 +8,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timezone
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="Wealth Terminal v8.0", layout="wide")
+st.set_page_config(page_title="Wealth Terminal v9.0", layout="wide")
 
 # --- 2. SCRAPER ---
 @st.cache_data(ttl=3600)
@@ -22,7 +22,7 @@ def get_micro_cap_universe():
             df.columns = [str(c).strip() for c in df.columns]
             col_candidates = [col for col in df.columns if any(x in col.upper() for x in ['TICKER', 'SYMBOL'])]
             if col_candidates:
-                target_col = col_candidates[0]
+                target_col = col_candidates
                 tickers = df[target_col].dropna().astype(str).tolist()
                 clean_tickers = []
                 for t in tickers:
@@ -49,7 +49,7 @@ def check_password():
         return False
     return True
 
-# --- 4. ANALYTICS ENGINE WITH THREE EXECUTION RULES & TRAILING STOPS ---
+# --- 4. ANALYTICS ENGINE WITH MULTI-WEEK HOLD CALCULATOR ---
 def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
     try:
         if df is None or len(df) < 60:
@@ -88,7 +88,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         dist_from_sma50 = float((price / sma50) - 1 if sma50 > 0 else 0.0)
         suggested_entry = float(df['High'].tail(5).max())
        
-        # Research Wizard Parameters Pass-Through
+        # Research Wizard Parameters
         chg_4w = float((price / df['Close'].iloc[-21]) - 1.0) if len(df) >= 21 else 0.0
         high_52w = float(df['High'].tail(252).max() if len(df) >= 252 else df['High'].max())
         ratio_52w = float(price / high_52w if high_52w > 0 else 0.0)
@@ -114,7 +114,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         if rsi > 82 or dist_from_sma50 > 0.35: zacks_score += 1
         zacks_rank = int(max(1, min(5, zacks_score)))
 
-        # Scoring Logic Core Frame
+        # Technical Scoring Matrix
         score = 0
         is_above_sma200 = price > sma200 if has_macro_history else True
         if is_above_sma200: score += 3  
@@ -124,45 +124,36 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         elif xvol >= 2.0: score += 2  
         if dist_from_sma50 > 0.40: score -= 4  
            
-        # Standard Technical Trigger Baseline
+        # Standard Rules Overrides
         base_status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
-       
         if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.35:
             base_status = "🔥 BUY"
             reason = "Explosive Volume Breakout Run"
 
-        # --- IMPLEMENTATION OF THE 3 STRICT DAY-TRADING EXECUTION RULES ---
-        # Rule 1: Volume Pullback Check (Do not buy if 1-day volume is dry at the peak)
         vol_is_drying_up = float(curr['Volume']) < df['Volume'].tail(5).mean()
-       
-        # Rule 2: Consolidation Check (Is the asset trading close to its base or too extended?)
         is_overextended = dist_from_sma50 > 0.22
-       
-        # Rule 3: Entry Trigger Check (Has it cleared the 5-day breakout line?)
         has_broken_out_5d = price >= suggested_entry
 
-        # Intercept Logic: Overrides the BUY status if rules are violated
         status = base_status
         if base_status == "🔥 BUY":
             if is_overextended:
                 status = "⏳ COOLING OFF (OVEREXTENDED)"
-                reason = "Rule 2 Violation: Extended >22% from SMA50. Await mean-reversion."
+                reason = "Rule 2: Extended >22% from SMA50. Await mean-reversion."
             elif vol_is_drying_up and not has_broken_out_5d:
                 status = "⏳ BASE FORMING (LOW VOL)"
-                reason = "Rule 1 & 3 Violation: Institutional volume dry at highs. Await 5D High breakout handle."
+                reason = "Rule 1 & 3: Volume drying up at highs. Await breakout."
             elif not has_broken_out_5d:
                 status = "🟡 SETTING UP"
-                reason = "Rule 3 Violation: Waiting for a clean breakout cross above 5-Day High resistance."
+                reason = "Rule 3: Waiting for cross above 5-Day High resistance."
             else:
                 status = "🚀 EXECUTE ACTIVE BUY"
-                reason = "All 3 Execution Rules Cleared: Heavy volume breakout from low extension base."
+                reason = "All 3 Execution Rules Cleared: Volume breakout from safe base."
 
-        # --- AUTOMATED TRAILING STOP-LOSS & TAKE-PROFIT ENGINE ---
-        # Volatility-adjusted parameters optimized for micro-caps
+        # Risk Management Controls
         initial_stop_price = float(price - (atr * 1.8))
-        trailing_stop_floor = float(price - (atr * 1.5))  # Tighter trailing stop to protect paper profits
-        take_profit_target = float(price + (atr * 2.5))   # Dynamic mathematical exit target
+        trailing_stop_floor = float(price - (atr * 1.5))  
+        take_profit_target = float(price + (atr * 2.5))  
        
         horizon = "⏳ WATCHLIST"
         if "BUY" in status or "EXECUTE" in status:
@@ -175,25 +166,56 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks):
         daytrade_target = float(price + (atr * 1.5))
         daytrade_stop = float(price - (atr * 1.0))
 
+        # --- NEW: TREND HORIZON CALCULATOR ENGINE ---
+        # Calculates structural consolidation length to determine maximum viable holding duration
+        base_days = 0
+        holding_guide = "⚡ DAY TRADE ONLY"
+       
+        try:
+            # Measure how long the price has been coiled near its 52-week high range
+            local_high_boundary = high_52w * 0.88
+            historical_closes = df['Close'].tail(90).tolist()
+            # Iteratively scan backward to find where the consolidation pattern started
+            for p_close in reversed(historical_closes):
+                if p_close >= local_high_boundary:
+                    base_days += 1
+                else:
+                    break
+                   
+            # Holding Classification Matrix Rules
+            if has_macro_history and sma50 > sma200 and price > sma200:
+                if base_days >= 45:
+                    holding_guide = "🐋 CORE MACRO HOLD (Months)" # Large accumulation base + Golden Cross
+                elif base_days >= 15:
+                    holding_guide = "💎 MULTI-WEEK SWING (Weeks)" # Moderate accumulation base
+                else:
+                    holding_guide = "⚡ SHORT SWING TACTICAL"
+            else:
+                holding_guide = "⚡ DAY TRADE ONLY (No Macro Floor)" # Broken macro trend lines = High velocity day trade scalp only
+        except:
+            pass
+
         return {
             "Ticker": symbol, "Price": round(price, 2), "Score": f"{score}/10",
             "Action": status, "Horizon Allocation": horizon, "Trigger Reason": reason,
             "Ext%": f"{dist_from_sma50*100:.1f}%", "RSI": int(rsi), "xVOL Velocity": f"{xvol:.1f}x",
             "Initial Stop Floor": round(initial_stop_price, 2),
-            "Dynamic Trailing Stop": round(trailing_stop_floor, 2), # Injected trailing stop metric
-            "Take Profit Target": round(take_profit_target, 2),     # Injected take profit metrics
+            "Dynamic Trailing Stop": round(trailing_stop_floor, 2),
+            "Take Profit Target": round(take_profit_target, 2),    
             "Sizing": f"{int((funds * risk)/(price - initial_stop_price)) if (price - initial_stop_price)>0 else 0} Shrs",
             "Chg_4W_Raw": float(chg_4w), "Ratio_52W_Raw": float(ratio_52w), "Zacks_Rank": int(zacks_rank),
             "EPS_Revision_Delta": float(eps_revision_momentum),
             "Operating_Margin": operating_margin, "ROA": return_on_assets,
-            "DT_Trigger": "ACTIVE" if has_broken_out_5d else "STAGED", "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2)
+            "DT_Trigger": "ACTIVE" if has_broken_out_5d else "STAGED", "DT_Target": round(daytrade_target, 2), "DT_Stop": round(daytrade_stop, 2),
+            # Pass new indicators to front-end layout columns
+            "Base_Duration_Days": int(base_days), "Holding_Horizon_Guide": holding_guide
         }
     except:
         return None
 
 # --- 5. DATA & UI ENVIRONMENT ---
 if check_password():
-    st.title("🐋 Institutional Micro-Cap Terminal v8.0")
+    st.title("🐋 Institutional Micro-Cap Terminal v9.0")
    
     with st.sidebar:
         st.header("⚙️ Capital Allocator")
@@ -252,14 +274,13 @@ if check_password():
            
         st.session_state.bulk_data = clean_ticker_data
 
-    # --- FOUR-TAB PLATFORM NAVIGATION ---
+    # --- FOUR-TAB NAV BAR CONFIGURATION ---
     tab1, tab2, tab3, tab4 = st.tabs(["📋 Execution Dashboard", "📈 Technical Visualizer Canvas", "🔬 Research Wizard Matrix", "🌌 Blue Sky Finder"])
    
     with tab1:
         st.subheader(f"Micro-Cap Breakout Execution Matrix (Sorted by {sort_by})")
         if not st.session_state.results.empty:
-            # Filters the main execution grid to show entry, trailing stops, and targets
-            exclude_internal = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop"]
+            exclude_internal = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop", "Base_Duration_Days", "Holding_Horizon_Guide"]
             display_cols = [c for c in st.session_state.results.columns if c not in exclude_internal]
             st.dataframe(st.session_state.results[display_cols], use_container_width=True, hide_index=True)
         else:
@@ -281,8 +302,6 @@ if check_password():
                 fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='orange'), row=2, col=1)
                 fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=650, margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Execute scan sweeps to display charting visuals.")
 
     with tab3:
         st.header("🔬 Institutional Factor Screen Layer")
@@ -321,8 +340,11 @@ if check_password():
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
+    # --- TAB 4: THE OPERATIONAL BLUE SKY ENGINE WITH HORIZON CLASSIFIER ---
     with tab4:
         st.header("🌌 Blue Sky Breakout Engine")
+        st.write("Filters: 1) Proximity to 52W High (>= 0.96) | 2) Volume Velocity Validation (xVOL >= 1.5x)")
+       
         if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
             df_sky = st.session_state.results.copy()
             df_sky['RVOL_num'] = df_sky['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
@@ -334,7 +356,21 @@ if check_password():
             if not passed_sky.empty:
                 st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
-                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "xVOL Velocity", "RSI", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"DT_Trigger": "DayTrade Action", "DT_Target": "Intraday Profit Target", "DT_Stop": "Tight Intraday Stop"}), use_container_width=True, hide_index=True)
+               
+                # Render the updated table featuring the automated Consolidation and Holding Horizon Guide parameters
+                st.dataframe(
+                    passed_sky[[
+                        "Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide",
+                        "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"
+                    ]].rename(columns={
+                        "Base_Duration_Days": "Accumulation Base (Days)",
+                        "Holding_Horizon_Guide": "Strategic Holding Guide",
+                        "DT_Trigger": "DayTrade Action",
+                        "DT_Target": "Intraday Profit Target",
+                        "DT_Stop": "Tight Intraday Stop"
+                    }),
+                    use_container_width=True, hide_index=True
+                )
                 st.write("---")
                 st.subheader("Visualising Blue Sky Margin vs Proximity Cluster Matrix")
                 fig_sky = go.Figure()
