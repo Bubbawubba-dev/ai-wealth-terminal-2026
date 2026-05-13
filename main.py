@@ -224,9 +224,22 @@ if check_password():
         if res_list:
             raw_df = pd.DataFrame(res_list)
            
-            raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
-            raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
-            raw_df['Score_num'] = raw_df['Score'].astype(str).str.split('/').str.astype(int)
+            # Defensive Column Verification to catch missing parameters
+            if 'xVOL Velocity' in raw_df.columns:
+                raw_df['RVOL_num'] = raw_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
+            else:
+                raw_df['RVOL_num'] = 1.0
+               
+            if 'Ext%' in raw_df.columns:
+                raw_df['Ext_num'] = raw_df['Ext%'].astype(str).str.replace('%', '', regex=False).astype(float)
+            else:
+                raw_df['Ext_num'] = 0.0
+               
+            if 'Score' in raw_df.columns:
+                # FIXED: Added .str[0] to isolate the numerator before casting to integer
+                raw_df['Score_num'] = raw_df['Score'].astype(str).str.split('/').str[0].astype(int)
+            else:
+                raw_df['Score_num'] = 0
            
             sort_map = {
                 "Technical Score": "Score_num",
@@ -238,10 +251,6 @@ if check_password():
             target_column = sort_map.get(sort_by, "Score_num")
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num'], errors='ignore')
-        else:
-            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation"])
-           
-        st.session_state.bulk_data = clean_ticker_data
 
     # --- THREE-TAB LAYOUT CONFIGURATION ---
     tab1, tab2, tab3 = st.tabs([
