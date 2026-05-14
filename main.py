@@ -289,6 +289,10 @@ if check_password():
        
         run = st.button("🚀 EXECUTE ALPHA VELOCITY SWEEP")
 
+    # Initialize session state for bulk_data if not present
+    if "bulk_data" not in st.session_state:
+        st.session_state.bulk_data = {}
+
     # --- TAB 6 AUTO-LOAD SECTION ---
     auto_load_tab6 = False
     if "new_swings_results" not in st.session_state or st.session_state.new_swings_results.empty:
@@ -321,7 +325,12 @@ if check_password():
                     raw_swings_df['RVOL_num'] = raw_swings_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_swings_df.columns else 1.0
                     sorted_swings = raw_swings_df.sort_values(by="RVOL_num", ascending=False)
                     st.session_state.new_swings_results = sorted_swings.drop(columns=['RVOL_num', 'Score_Internal_Num'], errors='ignore')
-                    st.session_state.bulk_data = {**st.session_state.bulk_data if "bulk_data" in st.session_state else {}, **clean_ticker_data_tab6}
+                    
+                    # FIXED: Properly merge bulk_data dictionaries
+                    if "bulk_data" in st.session_state:
+                        st.session_state.bulk_data.update(clean_ticker_data_tab6)
+                    else:
+                        st.session_state.bulk_data = clean_ticker_data_tab6
             except Exception as e:
                 st.warning(f"⚠️ Could not auto-load Tab 6 data: {str(e)}")
 
@@ -369,10 +378,6 @@ if check_password():
             st.session_state.new_swings_results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action"])
            
         st.session_state.bulk_data = clean_ticker_data
-
-    # Initialize session state for bulk_data if not present
-    if "bulk_data" not in st.session_state:
-        st.session_state.bulk_data = {}
 
     # --- 6-TAB MATRIX NAVIGATION ENVIRONMENT ---
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
