@@ -35,6 +35,61 @@ def get_micro_cap_universe():
         pass
     return ["MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ"]
 
+# --- 2B. TOP 10 MOMENTUM STOCKS FETCHER ---
+@st.cache_data(ttl=86400)  # Cache for 24 hours (daily refresh)
+def get_top_10_momentum_stocks():
+    """
+    Automatically fetches top 10 most volatile/momentum stocks from a predefined universe.
+    Uses volume velocity and recent price momentum as selection criteria.
+    """
+    candidate_universe = [
+        "MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ",
+        "RKLB", "KTOS", "CYBR", "GNK", "PHYS", "CEG", "NVDA", "MSFT", "AAPL", "TSLA",
+        "AMD", "SOFI", "PLTR", "UPST", "U", "COIN", "RIOT", "MSTR", "SQ", "DKNG"
+    ]
+    
+    momentum_scores = []
+    
+    for ticker in candidate_universe:
+        try:
+            ticker_obj = yf.Ticker(ticker)
+            data = ticker_obj.history(period="3mo")
+            
+            if data is not None and not data.empty and len(data) >= 20:
+                # Calculate momentum metrics
+                close_price = float(data['Close'].iloc[-1])
+                
+                # 5-day momentum
+                momentum_5d = (close_price / data['Close'].iloc[-5] - 1) * 100 if len(data) >= 5 else 0
+                
+                # Volume velocity (last 3 days avg vs 20-day avg)
+                vol_recent = data['Volume'].tail(3).mean()
+                vol_baseline = data['Volume'].tail(20).mean()
+                xvol = vol_recent / vol_baseline if vol_baseline > 0 else 1.0
+                
+                # Average True Range for volatility
+                atr = (data['High'] - data['Low']).rolling(14).mean().iloc[-1] if len(data) >= 14 else 0
+                
+                # Composite momentum score
+                momentum_score = (momentum_5d * 0.4) + (xvol * 25 * 0.4) + (atr / close_price * 100 * 0.2)
+                
+                momentum_scores.append({
+                    "Ticker": ticker,
+                    "Price": round(close_price, 2),
+                    "Momentum_5D": round(momentum_5d, 2),
+                    "xVOL": round(xvol, 2),
+                    "Score": round(momentum_score, 2)
+                })
+        except:
+            pass
+    
+    # Sort by composite score and return top 10
+    if momentum_scores:
+        df_momentum = pd.DataFrame(momentum_scores)
+        return df_momentum.nlargest(10, 'Score')['Ticker'].tolist()
+    
+    return ["MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ"]
+
 # --- 3. SECURITY ---
 def check_password():
     if "password_correct" not in st.session_state:
@@ -234,6 +289,42 @@ if check_password():
        
         run = st.button("🚀 EXECUTE ALPHA VELOCITY SWEEP")
 
+    # --- TAB 6 AUTO-LOAD SECTION ---
+    auto_load_tab6 = False
+    if "new_swings_results" not in st.session_state or st.session_state.new_swings_results.empty:
+        auto_load_tab6 = True
+
+    if auto_load_tab6:
+        with st.spinner("⚡ Auto-loading Top 10 Daily Momentum Stocks for Tab 6..."):
+            try:
+                top_10_tickers = get_top_10_momentum_stocks()
+                res_list_auto_tab6 = []
+                clean_ticker_data_tab6 = {}
+                
+                for t in top_10_tickers:
+                    try:
+                        ticker_obj = yf.Ticker(t)
+                        ticker_data = ticker_obj.history(period="2y")
+                        if ticker_data is not None and not ticker_data.empty:
+                            if isinstance(ticker_data.columns, pd.MultiIndex):
+                                ticker_data.columns = ticker_data.columns.get_level_values(0)
+                            clean_ticker_data_tab6[t] = ticker_data
+                            
+                            res_swings = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks, history_floor=20)
+                            if res_swings: 
+                                res_list_auto_tab6.append(res_swings)
+                    except:
+                        pass
+                
+                if res_list_auto_tab6:
+                    raw_swings_df = pd.DataFrame(res_list_auto_tab6)
+                    raw_swings_df['RVOL_num'] = raw_swings_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_swings_df.columns else 1.0
+                    sorted_swings = raw_swings_df.sort_values(by="RVOL_num", ascending=False)
+                    st.session_state.new_swings_results = sorted_swings.drop(columns=['RVOL_num', 'Score_Internal_Num'], errors='ignore')
+                    st.session_state.bulk_data = {**st.session_state.bulk_data if "bulk_data" in st.session_state else {}, **clean_ticker_data_tab6}
+            except Exception as e:
+                st.warning(f"⚠️ Could not auto-load Tab 6 data: {str(e)}")
+
     if run or "results" not in st.session_state:
         res_list_strict = []
         res_list_new_swings = []
@@ -267,7 +358,7 @@ if check_password():
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
         else:
-            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop", "Take Profit Target", "Sizing"])
+            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop"])
 
         if res_list_new_swings:
             raw_swings_df = pd.DataFrame(res_list_new_swings)
@@ -278,6 +369,10 @@ if check_password():
             st.session_state.new_swings_results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action"])
            
         st.session_state.bulk_data = clean_ticker_data
+
+    # Initialize session state for bulk_data if not present
+    if "bulk_data" not in st.session_state:
+        st.session_state.bulk_data = {}
 
     # --- 6-TAB MATRIX NAVIGATION ENVIRONMENT ---
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -299,7 +394,7 @@ if check_password():
             st.info("Execute scanner sweeps to track pipeline data.")
 
     with tab2:
-        valid_selections = [t for t in t_list if t in st.session_state.bulk_data]
+        valid_selections = [t for t in t_list if t in st.session_state.bulk_data] if "bulk_data" in st.session_state else []
         if valid_selections:
             sel = st.radio("Asset Pivot View:", valid_selections, horizontal=True)
             if sel and sel in st.session_state.bulk_data:
@@ -364,7 +459,7 @@ if check_password():
                     fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='gray', size=8)), secondary_y=True)
                 if len(passed_stocks) > 0:
                     fig_wiz.add_trace(go.Bar(x=passed_stocks['Ticker'], y=passed_stocks['Revision Delta %'].astype(float), name='PASSED: Rev Delta', marker_color='#00FFCC'), secondary_y=False)
-                    fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FFCC00', size=14, symbol='diamond')), secondary_y=True)
+                    fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FFCC00', size=10)), secondary_y=True)
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
@@ -381,7 +476,7 @@ if check_password():
             if not passed_sky.empty:
                 st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
-                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"Base_Duration_Days": "Accumulation Base (Days)", "Holding_Horizon_Guide": "Strategic Holding Guide", "DT_Trigger": "DayTrade Action", "DT_Target": "Intraday Profit Target", "DT_Stop": "Tight Intraday Stop"}), use_container_width=True, hide_index=True)
+                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"Base_Duration_Days": "Days @ High", "Holding_Horizon_Guide": "Hold Guide"}), use_container_width=True, hide_index=True)
             else:
                 st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate.")
         else:
@@ -426,10 +521,22 @@ if check_password():
 
     with tab6:
         st.header("🔥 Aggressive Momentum Playground")
-        st.warning("⚠️ RISK NOTICE: This workspace runs a short 20-day historical data gate. Highly volatile assets may report false breakout signals, meaning you might be buying at short-term price peaks.")
+        st.info("📅 Top 10 Daily Momentum Stocks - Auto-selected by volume velocity & momentum metrics. Refreshes daily.")
+        st.warning("⚠️ RISK NOTICE: This workspace runs a short 20-day historical data gate. Highly volatile assets may report false breakout signals, meaning you might be buying at short-term peaks.")
         if not st.session_state.new_swings_results.empty:
             exclude_swings = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "Score_Internal_Num"]
             display_swings_cols = [c for c in st.session_state.new_swings_results.columns if c not in exclude_swings]
             st.dataframe(st.session_state.new_swings_results[display_swings_cols], use_container_width=True, hide_index=True)
+            
+            # Add visualization for top momentum picks
+            if not st.session_state.new_swings_results.empty:
+                st.subheader("📊 Momentum Score Distribution")
+                momentum_viz_data = st.session_state.new_swings_results[['Ticker', 'xVOL Velocity']].copy()
+                momentum_viz_data['xVOL_Numeric'] = momentum_viz_data['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
+                fig_momentum = go.Figure(data=[
+                    go.Bar(x=momentum_viz_data['Ticker'], y=momentum_viz_data['xVOL_Numeric'], marker_color='#FF6B35')
+                ])
+                fig_momentum.update_layout(template="plotly_dark", title="Volume Velocity Ranking", xaxis_title="Ticker", yaxis_title="xVOL Multiplier", height=400)
+                st.plotly_chart(fig_momentum, use_container_width=True)
         else:
-            st.info("Execute scanner velocity sweeps to populate short-term tracking records.")
+            st.info("⏳ Loading auto-selected top 10 momentum stocks...")
