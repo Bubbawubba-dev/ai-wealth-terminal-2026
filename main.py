@@ -35,12 +35,13 @@ def get_micro_cap_universe():
         pass
     return ["MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ"]
 
-# --- 2B. TOP 10 MOMENTUM STOCKS FETCHER ---
-@st.cache_data(ttl=86400)  # Cache for 24 hours (daily refresh)
-def get_top_10_momentum_stocks():
+# --- 2B. TOP 10 MOMENTUM STOCKS FETCHER (DATE-KEYED CACHE) ---
+@st.cache_data(ttl=3600)  # Shorter TTL to force daily refresh
+def get_top_10_momentum_stocks(_date_key=None):
     """
     Automatically fetches top 10 most volatile/momentum stocks from a predefined universe.
     Uses volume velocity and recent price momentum as selection criteria.
+    Date-keyed to force daily refresh.
     """
     candidate_universe = [
         "MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ",
@@ -320,7 +321,9 @@ if check_password():
     if auto_load_tab6:
         with st.spinner("⚡ Auto-loading Top 10 Daily Momentum Stocks for Tab 6..."):
             try:
-                top_10_tickers = get_top_10_momentum_stocks()
+                # Pass today's date as cache key to force daily refresh
+                today = datetime.now().strftime("%Y-%m-%d")
+                top_10_tickers = get_top_10_momentum_stocks(_date_key=today)
                 res_list_auto_tab6 = []
                 clean_ticker_data_tab6 = {}
                 
@@ -425,7 +428,6 @@ if check_password():
                 df_plot = st.session_state.bulk_data[sel].copy()
                 df_plot.index = pd.to_datetime(df_plot.index)
                
-                 # FIXED SUBPLOT DICTIONARY SYNTAX
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                
                 fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), secondary_y=False)
@@ -434,7 +436,6 @@ if check_password():
                 if 'SMA50' in df_plot.columns:
                     fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA50'], line=dict(color='cyan', width=1), name='SMA 50'), secondary_y=False)
                
-                 # REVERTED VOLUME LOOK: Streamlined trace line presentation overlay [INDEX]
                 fig.add_trace(go.Scatter(
                     x=df_plot.index,
                     y=df_plot['Volume'],
