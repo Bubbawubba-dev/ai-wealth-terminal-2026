@@ -105,7 +105,7 @@ def check_password():
     return True
 
 # --- 4. ANALYTICS ENGINE WITH THREE EXECUTION RULES ---
-def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, history_floor=60):
+def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, history_floor=60, aggressive_mode=False):
     try:
         if df is None or len(df) < history_floor:
             return None
@@ -169,21 +169,28 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, his
         if rsi > 82 or dist_from_sma50 > 0.35: zacks_score += 1
         zacks_rank = int(max(1, min(5, zacks_score)))
 
-        # Technical Scoring Matrix
+        # Technical Scoring Matrix - AGGRESSIVE MODE ADJUSTMENTS
         score = 0
         is_above_sma200 = price > sma200 if has_macro_history else True
         if is_above_sma200: score += 3  
         if 65 <= rsi <= 82: score += 5  
-        elif rsi > 82: score -= 2  
+        elif rsi > 82: score -= 2 if not aggressive_mode else 0  # More lenient in aggressive mode
         if xvol >= 4.0: score += 4  
         elif xvol >= 2.0: score += 2  
-        if dist_from_sma50 > 0.55: score -= 2  
+        if dist_from_sma50 > 0.55: score -= 2 if not aggressive_mode else -1  # More lenient extension in aggressive mode
            
         base_status = "🟡 MONITOR"
         reason = "Awaiting Momentum Confirmation"
-        if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.50:
-            base_status = "🔥 BUY"
-            reason = "Explosive Volume Breakout Run"
+        
+        # AGGRESSIVE MODE: Lower thresholds for swings
+        if aggressive_mode:
+            if score >= 4 and xvol >= 1.5:
+                base_status = "🔥 BUY"
+                reason = "High Volatility Swing Opportunity"
+        else:
+            if score >= 6 and xvol >= 2.0 and dist_from_sma50 < 0.50:
+                base_status = "🔥 BUY"
+                reason = "Explosive Volume Breakout Run"
 
         vol_is_drying_up = float(curr['Volume']) < df['Volume'].tail(5).mean()
         is_overextended = dist_from_sma50 > 0.50
@@ -191,18 +198,30 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, his
 
         status = base_status
         if base_status == "🔥 BUY":
-            if is_overextended:
-                status = "⏳ COOLING OFF (OVEREXTENDED)"
-                reason = "Rule 2: Extended >50% from SMA50."
-            elif vol_is_drying_up and not has_broken_out_5d:
-                status = "⏳ BASE FORMING (LOW VOL)"
-                reason = "Rule 1 & 3: Volume drying up at highs."
-            elif not has_broken_out_5d:
-                status = "🟡 SETTING UP"
-                reason = "Rule 3: Waiting for cross above 5-Day High."
+            if aggressive_mode:
+                # In aggressive mode, be more permissive with extended moves
+                if vol_is_drying_up and not has_broken_out_5d:
+                    status = "⏳ BASE FORMING (LOW VOL)"
+                    reason = "Volume consolidating at support levels."
+                elif not has_broken_out_5d:
+                    status = "🟡 SETTING UP"
+                    reason = "Waiting for intra-day momentum confirmation."
+                else:
+                    status = "🚀 EXECUTE SWING SCALP"
+                    reason = "Aggressive momentum trade ready."
             else:
-                status = "🚀 EXECUTE ACTIVE BUY"
-                reason = "All 3 Execution Rules Cleared."
+                if is_overextended:
+                    status = "⏳ COOLING OFF (OVEREXTENDED)"
+                    reason = "Rule 2: Extended >50% from SMA50."
+                elif vol_is_drying_up and not has_broken_out_5d:
+                    status = "⏳ BASE FORMING (LOW VOL)"
+                    reason = "Rule 1 & 3: Volume drying up at highs."
+                elif not has_broken_out_5d:
+                    status = "🟡 SETTING UP"
+                    reason = "Rule 3: Waiting for cross above 5-Day High."
+                else:
+                    status = "🚀 EXECUTE ACTIVE BUY"
+                    reason = "All 3 Execution Rules Cleared."
 
         # Risk Management Controls
         initial_stop_price = float(price - (atr * 1.8))
@@ -210,7 +229,7 @@ def analyze_stock(symbol, df, ticker_obj, funds, risk, enable_analyst_picks, his
         take_profit_target = float(price + (atr * 2.5))  
        
         horizon = "⏳ WATCHLIST"
-        if "BUY" in status or "EXECUTE" in status:
+        if "BUY" in status or "EXECUTE" in status or "SWING" in status:
             horizon = "⚡ SHORT-TERM SWING" if xvol >= 3.0 else "💎 LONG-TERM HOLD"
         elif price <= initial_stop_price:
             status = "🛑 HARD STOP EXCEEDED"
@@ -314,7 +333,7 @@ if check_password():
                                 ticker_data.columns = ticker_data.columns.get_level_values(0)
                             clean_ticker_data_tab6[t] = ticker_data
                             
-                            res_swings = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks, history_floor=20)
+                            res_swings = analyze_stock(t, ticker_data, ticker_obj, funds, risk, enable_analyst_picks, history_floor=20, aggressive_mode=True)
                             if res_swings: 
                                 res_list_auto_tab6.append(res_swings)
                     except:
@@ -367,7 +386,7 @@ if check_password():
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
         else:
-            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop"])
+            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop", "Take Profit Target", "Sizing"])
 
         if res_list_new_swings:
             raw_swings_df = pd.DataFrame(res_list_new_swings)
@@ -406,7 +425,7 @@ if check_password():
                 df_plot = st.session_state.bulk_data[sel].copy()
                 df_plot.index = pd.to_datetime(df_plot.index)
                
-                # FIXED SUBPLOT DICTIONARY SYNTAX
+                 # FIXED SUBPLOT DICTIONARY SYNTAX
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                
                 fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'], name="Price"), secondary_y=False)
@@ -415,7 +434,7 @@ if check_password():
                 if 'SMA50' in df_plot.columns:
                     fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['SMA50'], line=dict(color='cyan', width=1), name='SMA 50'), secondary_y=False)
                
-                # REVERTED VOLUME LOOK: Streamlined trace line presentation overlay [INDEX]
+                 # REVERTED VOLUME LOOK: Streamlined trace line presentation overlay [INDEX]
                 fig.add_trace(go.Scatter(
                     x=df_plot.index,
                     y=df_plot['Volume'],
@@ -461,10 +480,10 @@ if check_password():
                 fig_wiz = make_subplots(specs=[[{"secondary_y": True}]])
                 if len(failed_stocks) > 0:
                     fig_wiz.add_trace(go.Bar(x=failed_stocks['Ticker'], y=failed_stocks['Revision Delta %'].astype(float), name='Excluded: Rev Delta', marker_color='rgba(255, 99, 132, 0.2)'), secondary_y=False)
-                    fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='gray', size=8)), secondary_y=True)
+                    fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='rgba(255, 99, 132, 0.4)', size=8)), secondary_y=True)
                 if len(passed_stocks) > 0:
                     fig_wiz.add_trace(go.Bar(x=passed_stocks['Ticker'], y=passed_stocks['Revision Delta %'].astype(float), name='PASSED: Rev Delta', marker_color='#00FFCC'), secondary_y=False)
-                    fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FFCC00', size=10)), secondary_y=True)
+                    fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FF6B35', size=10)), secondary_y=True)
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
@@ -481,7 +500,7 @@ if check_password():
             if not passed_sky.empty:
                 st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
-                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"Base_Duration_Days": "Days @ High", "Holding_Horizon_Guide": "Hold Guide"}), use_container_width=True, hide_index=True)
+                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"Base_Duration_Days": "Days", "Holding_Horizon_Guide": "Horizon", "DT_Trigger": "Trigger", "DT_Target": "PT", "DT_Stop": "SL"}), use_container_width=True, hide_index=True)
             else:
                 st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate.")
         else:
@@ -527,7 +546,7 @@ if check_password():
     with tab6:
         st.header("🔥 Aggressive Momentum Playground")
         st.info("📅 Top 10 Daily Momentum Stocks - Auto-selected by volume velocity & momentum metrics. Refreshes daily.")
-        st.warning("⚠️ RISK NOTICE: This workspace runs a short 20-day historical data gate. Highly volatile assets may report false breakout signals, meaning you might be buying at short-term peaks.")
+        st.warning("⚠️ RISK NOTICE: This workspace runs a short 20-day historical data gate with aggressive thresholds. Highly volatile assets may report false breakout signals. Use tighter stops.")
         if not st.session_state.new_swings_results.empty:
             exclude_swings = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "Score_Internal_Num"]
             display_swings_cols = [c for c in st.session_state.new_swings_results.columns if c not in exclude_swings]
