@@ -309,13 +309,16 @@ if check_password():
        
         run = st.button("🚀 EXECUTE ALPHA VELOCITY SWEEP")
 
-    # Initialize session state for bulk_data if not present
+    # Initialize session state for bulk_data and new_swings_results if not present
     if "bulk_data" not in st.session_state:
         st.session_state.bulk_data = {}
+    
+    if "new_swings_results" not in st.session_state:
+        st.session_state.new_swings_results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop", "Take Profit Target", "Sizing"])
 
     # --- TAB 6 AUTO-LOAD SECTION ---
     auto_load_tab6 = False
-    if "new_swings_results" not in st.session_state or st.session_state.new_swings_results.empty:
+    if st.session_state.new_swings_results.empty:
         auto_load_tab6 = True
 
     if auto_load_tab6:
@@ -389,7 +392,7 @@ if check_password():
             sorted_df = raw_df.sort_values(by=target_column, ascending=ascending_bool)
             st.session_state.results = sorted_df.drop(columns=['RVOL_num', 'Ext_num', 'Score_num', 'Score_Internal_Num'], errors='ignore')
         else:
-            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop", "Take Profit Target", "Sizing"])
+            st.session_state.results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop"])
 
         if res_list_new_swings:
             raw_swings_df = pd.DataFrame(res_list_new_swings)
@@ -397,7 +400,7 @@ if check_password():
             sorted_swings = raw_swings_df.sort_values(by="RVOL_num", ascending=False)
             st.session_state.new_swings_results = sorted_swings.drop(columns=['RVOL_num', 'Score_Internal_Num'], errors='ignore')
         else:
-            st.session_state.new_swings_results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action"])
+            st.session_state.new_swings_results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop"])
            
         st.session_state.bulk_data = clean_ticker_data
 
@@ -413,7 +416,7 @@ if check_password():
    
     with tab1:
         st.subheader(f"Micro-Cap Breakout Execution Matrix (Sorted by {sort_by})")
-        if not st.session_state.results.empty:
+        if "results" in st.session_state and not st.session_state.results.empty:
             exclude_internal = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "DT_Trigger", "DT_Target", "DT_Stop", "Base_Duration_Days", "Holding_Horizon_Guide"]
             display_cols = [c for c in st.session_state.results.columns if c not in exclude_internal]
             st.dataframe(st.session_state.results[display_cols], use_container_width=True, hide_index=True)
@@ -453,7 +456,7 @@ if check_password():
 
     with tab3:
         st.header("🔬 Institutional Factor Screen Layer")
-        if not st.session_state.results.empty and "Chg_4W_Raw" in st.session_state.results.columns:
+        if "results" in st.session_state and not st.session_state.results.empty and "Chg_4W_Raw" in st.session_state.results.columns:
             df_wizard = st.session_state.results.copy()
             f1 = (df_wizard['Chg_4W_Raw'] >= 0.10) & (df_wizard['Chg_4W_Raw'] <= 0.20)
             f2 = df_wizard['Ratio_52W_Raw'] >= 0.90
@@ -481,16 +484,16 @@ if check_password():
                 fig_wiz = make_subplots(specs=[[{"secondary_y": True}]])
                 if len(failed_stocks) > 0:
                     fig_wiz.add_trace(go.Bar(x=failed_stocks['Ticker'], y=failed_stocks['Revision Delta %'].astype(float), name='Excluded: Rev Delta', marker_color='rgba(255, 99, 132, 0.2)'), secondary_y=False)
-                    fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='rgba(255, 99, 132, 0.4)', size=8)), secondary_y=True)
+                    fig_wiz.add_trace(go.Scatter(x=failed_stocks['Ticker'], y=failed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='Excluded: 52W Ratio', marker=dict(color='rgba(100,100,100,0.3)')), secondary_y=False)
                 if len(passed_stocks) > 0:
                     fig_wiz.add_trace(go.Bar(x=passed_stocks['Ticker'], y=passed_stocks['Revision Delta %'].astype(float), name='PASSED: Rev Delta', marker_color='#00FFCC'), secondary_y=False)
-                    fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FF6B35', size=10)), secondary_y=True)
+                    fig_wiz.add_trace(go.Scatter(x=passed_stocks['Ticker'], y=passed_stocks['Proximity to 52W High'].astype(float), mode='markers', name='PASSED: 52W Ratio', marker=dict(color='#FF6B35', size=10)), secondary_y=False)
                 fig_wiz.update_layout(template="plotly_dark", height=550, title_text="Analyst Consensus Revision Overlays", xaxis_title="Ticker")
                 st.plotly_chart(fig_wiz, use_container_width=True)
 
     with tab4:
         st.header("🌌 Blue Sky Breakout Engine")
-        if not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
+        if "results" in st.session_state and not st.session_state.results.empty and "Ratio_52W_Raw" in st.session_state.results.columns:
             df_sky = st.session_state.results.copy()
             df_sky['RVOL_num'] = df_sky['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float)
            
@@ -501,7 +504,7 @@ if check_password():
             if not passed_sky.empty:
                 st.success(f"🔥 {len(passed_sky)} Micro-Caps Found Coiled Within 4% of All-Time Highs")
                 passed_sky['52W High Proximity'] = passed_sky['Ratio_52W_Raw'].round(3)
-                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]].rename(columns={"Base_Duration_Days": "Days", "Holding_Horizon_Guide": "Horizon", "DT_Trigger": "Trigger", "DT_Target": "PT", "DT_Stop": "SL"}), use_container_width=True, hide_index=True)
+                st.dataframe(passed_sky[["Ticker", "Price", "52W High Proximity", "Base_Duration_Days", "Holding_Horizon_Guide", "DT_Trigger", "DT_Target", "DT_Stop", "Sizing"]], use_container_width=True, hide_index=True)
             else:
                 st.warning("Zero micro-cap assets currently match the combined 0.96 high proximity gate.")
         else:
@@ -524,7 +527,7 @@ if check_password():
        
         # UNIFIED GLOBAL DATA CACHING POOL
         combined_scanned_pool = pd.DataFrame()
-        if not st.session_state.results.empty:
+        if "results" in st.session_state and not st.session_state.results.empty:
             combined_scanned_pool = pd.concat([combined_scanned_pool, st.session_state.results], ignore_index=True)
         if not st.session_state.new_swings_results.empty:
             combined_scanned_pool = pd.concat([combined_scanned_pool, st.session_state.new_swings_results], ignore_index=True)
