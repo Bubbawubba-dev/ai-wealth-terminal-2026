@@ -35,13 +35,12 @@ def get_micro_cap_universe():
         pass
     return ["MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ"]
 
-# --- 2B. TOP 10 MOMENTUM STOCKS FETCHER (DATE-KEYED CACHE) ---
-@st.cache_data(ttl=3600)  # Shorter TTL to force daily refresh
-def get_top_10_momentum_stocks(_date_key=None):
+# --- 2B. TOP 10 MOMENTUM STOCKS FETCHER (NO CACHE - ALWAYS FRESH) ---
+def get_top_10_momentum_stocks():
     """
     Automatically fetches top 10 most volatile/momentum stocks from a predefined universe.
     Uses volume velocity and recent price momentum as selection criteria.
-    Date-keyed to force daily refresh.
+    NO CACHE - Always fetches fresh data for daily updates.
     """
     candidate_universe = [
         "MRAM", "ASTS", "HIMS", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "VECO", "IONQ",
@@ -315,18 +314,19 @@ if check_password():
     
     if "new_swings_results" not in st.session_state:
         st.session_state.new_swings_results = pd.DataFrame(columns=["Ticker", "Price", "Score", "Action", "Horizon Allocation", "Trigger Reason", "Ext%", "RSI", "xVOL Velocity", "Initial Stop Floor", "Dynamic Trailing Stop", "Take Profit Target", "Sizing"])
+    
+    if "last_tab6_load_date" not in st.session_state:
+        st.session_state.last_tab6_load_date = None
 
-    # --- TAB 6 AUTO-LOAD SECTION ---
-    auto_load_tab6 = False
-    if st.session_state.new_swings_results.empty:
-        auto_load_tab6 = True
+    # --- TAB 6 AUTO-LOAD SECTION (DAILY REFRESH) ---
+    today = datetime.now().strftime("%Y-%m-%d")
+    auto_load_tab6 = st.session_state.new_swings_results.empty or st.session_state.last_tab6_load_date != today
 
     if auto_load_tab6:
         with st.spinner("⚡ Auto-loading Top 10 Daily Momentum Stocks for Tab 6..."):
             try:
-                # Pass today's date as cache key to force daily refresh
-                today = datetime.now().strftime("%Y-%m-%d")
-                top_10_tickers = get_top_10_momentum_stocks(_date_key=today)
+                # Fetch fresh data every day (no cache)
+                top_10_tickers = get_top_10_momentum_stocks()
                 res_list_auto_tab6 = []
                 clean_ticker_data_tab6 = {}
                 
@@ -350,8 +350,9 @@ if check_password():
                     raw_swings_df['RVOL_num'] = raw_swings_df['xVOL Velocity'].astype(str).str.replace('x', '', regex=False).astype(float) if 'xVOL Velocity' in raw_swings_df.columns else 1.0
                     sorted_swings = raw_swings_df.sort_values(by="RVOL_num", ascending=False)
                     st.session_state.new_swings_results = sorted_swings.drop(columns=['RVOL_num', 'Score_Internal_Num'], errors='ignore')
+                    st.session_state.last_tab6_load_date = today
                     
-                    # FIXED: Properly merge bulk_data dictionaries
+                    # Merge bulk_data with new tab6 data
                     if "bulk_data" in st.session_state:
                         st.session_state.bulk_data.update(clean_ticker_data_tab6)
                     else:
@@ -551,6 +552,13 @@ if check_password():
         st.header("🔥 Aggressive Momentum Playground")
         st.info("📅 Top 10 Daily Momentum Stocks - Auto-selected by volume velocity & momentum metrics. Refreshes daily.")
         st.warning("⚠️ RISK NOTICE: This workspace runs a short 20-day historical data gate with aggressive thresholds. Highly volatile assets may report false breakout signals. Use tighter stops.")
+        
+        col_refresh_left, col_refresh_right = st.columns([0.8, 0.2])
+        with col_refresh_right:
+            if st.button("🔄 Refresh Tab 6 Now"):
+                st.session_state.last_tab6_load_date = None
+                st.rerun()
+        
         if not st.session_state.new_swings_results.empty:
             exclude_swings = ["Chg_4W_Raw", "Ratio_52W_Raw", "Zacks_Rank", "EPS_Revision_Delta", "Operating_Margin", "ROA", "Score_Internal_Num"]
             display_swings_cols = [c for c in st.session_state.new_swings_results.columns if c not in exclude_swings]
