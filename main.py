@@ -153,7 +153,7 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
         else: label = "Extreme Fear"
 
         return {
-            "timestamp": datetime.now(ZoneInfo("Asia/HongKong"))
+            "timestamp": datetime.now(ZoneInfo("Asia/Hong_Kong"))
             "ticker": ticker,
             "score": composite_score,
             "label": label,
