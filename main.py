@@ -386,7 +386,7 @@ hist_data = fetch_historical_data(universe)
 top_10_momentum = calculate_momentum_metrics(hist_data, universe)
 
 # Main content tabs
-tab1, tab2, tab3 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting", "Wealth Manager"])
 
 # --- TAB 1: MOMENTUM SCANNER ---
 with tab1:
@@ -530,6 +530,45 @@ with tab3:
     else:
         st.error("Core financial tracking dataset structure error.")
 
+# TAB 4: INTEGRATED LONG-TERM INVESTMENT MODALITY
+with tab_macro:
+st.subheader("Institutional Macro Structural Scanner")
+st.markdown("This module monitors structural market health via structural 50-day and 200-day moving averages.")
+
+if not historical_data.empty:
+macro_df = calculate_macro_trends(historical_data, universe)
+
+if not macro_df.empty:
+# Actionable filtering UI inside the tab
+regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+
+filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+
+st.dataframe(filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True), use_container_width=True, hide_index=True)
+
+# Interactive visualization context for investment entries
+st.subheader("Macro Trend Construction Visualization")
+viz_ticker = st.selectbox("Select Asset for Multi-Month Visual Inspection:", filtered_df["Ticker"].tolist() if not filtered_df.empty else universe)
+
+try:
+ticker_close = historical_data["Close"][viz_ticker].dropna()
+t_50 = ticker_close.rolling(50).mean()
+t_200 = ticker_close.rolling(200).mean()
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
+fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA (Cyclical Trend)", line=dict(color="#f59e0b", dash="dash")))
+fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA (Institutional Base)", line=dict(color="#ef4444", width=2)))
+
+fig.update_layout(title=f"{viz_ticker} Structural Health Matrix", template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20))
+st.plotly_chart(fig, use_container_width=True)
+except Exception as e:
+st.caption(f"Could not build visualization matrix for {viz_ticker}: {e}")
+else:
+st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
+else:
+st.error("Engine Fault: Macro framework history inaccessible.")
 # --- 5. FUTURE EXPANSION HOOKS ---
 st.markdown("---")
 st.caption("⚓ Developer API Core Integrations Status: Webhook Daemon Listening on `localhost:8000` | Alpaca / Interactive Brokers Sandboxed Core: `Offline`")
