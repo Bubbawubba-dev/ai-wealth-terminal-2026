@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Wealth Terminal v12.0", layout="wide", page_icon="📈")
@@ -172,6 +172,81 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             "label": "Neutral (Insufficient Data)",
             "error": str(e)
         }
+
+def generate_forecast(ticker_series, days_ahead=30):
+    """Generates a 30-day forward forecast with upper/lower volatility bands using linear regression."""
+    try:
+        if len(ticker_series) < 30:
+            return None
+        
+        # Use last 60 days for linear regression trend
+        recent_data = ticker_series.iloc[-60:].reset_index(drop=True)
+        x = np.arange(len(recent_data))
+        y = recent_data.values
+        
+        # Linear regression fit
+        z = np.polyfit(x, y, 1)
+        p = np.poly1d(z)
+        
+        # Calculate standard deviation of residuals for bands
+        residuals = y - p(x)
+        std_dev = np.std(residuals)
+        
+        # Generate forecast
+        future_x = np.arange(len(recent_data), len(recent_data) + days_ahead)
+        forecast_values = p(future_x)
+        upper_band = forecast_values + (2 * std_dev)
+        lower_band = forecast_values - (2 * std_dev)
+        
+        # Create dataframe with forecast dates
+        last_date = ticker_series.index[-1]
+        future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=days_ahead, freq='D')
+        
+        forecast_df = pd.DataFrame({
+            'Forecast': forecast_values,
+            'Upper Band': upper_band,
+            'Lower Band': lower_band
+        }, index=future_dates)
+        
+        return forecast_df
+    except Exception as e:
+        st.error(f"Forecast generation error: {str(e)}")
+        return None
+
+# --- 4. MAIN APPLICATION INITIALIZATION ---
+# Initialize session state variables
+if "account_size" not in st.session_state:
+    st.session_state.account_size = 100000.0
+if "risk_pct" not in st.session_state:
+    st.session_state.risk_pct = 2.0
+
+# Sidebar configuration
+with st.sidebar:
+    st.title("⚙️ Terminal Configuration")
+    st.session_state.account_size = st.number_input("Account Size ($)", value=st.session_state.account_size, step=1000.0)
+    st.session_state.risk_pct = st.slider("Risk Per Trade (%)", min_value=0.5, max_value=5.0, value=st.session_state.risk_pct, step=0.5)
+
+account_size = st.session_state.account_size
+risk_pct = st.session_state.risk_pct
+
+# Fetch data
+universe = get_base_universe()
+hist_data = fetch_historical_data(universe)
+top_10_momentum = calculate_momentum_metrics(hist_data, universe)
+
+# Main content tabs
+tab1, tab2, tab3 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting"])
+
+# --- TAB 1: MOMENTUM SCANNER ---
+with tab1:
+    st.subheader("Real-Time Momentum & Volatility Breakout Scanner")
+    st.markdown("Identifies explosive momentum candidates using 20-day returns, volume velocity, and ATR breakout signals.")
+    
+    if not top_10_momentum.empty:
+        st.dataframe(top_10_momentum, use_container_width=True, hide_index=True)
+    else:
+        st.warning("No momentum data available. Check data fetch status.")
+
 # --- TAB 2: POSITION SIZER & RISK ARCHITECT ---
 with tab2:
     st.subheader("Smart Position Sizing & Strategic Entry Engine")
@@ -220,8 +295,10 @@ with tab2:
     st.subheader("Alternative Data: Sentiment & Order Flow Matrix")
     s_col1, s_col2 = st.columns(2)
 
-    # Algorithmic derivation using price position vs historical boundaries
-    sentiment_score = calculate_sentiment_score(ticker_close, ticker_atr)
+    # Get sentiment score for selected ticker
+    sentiment_data = calculate_sentiment_score(hist_data, selected_ticker)
+    sentiment_score = sentiment_data.get("score", 50)
+    
     with s_col1:
         st.metric("Aggregated Retail Sentiment Score", f"{sentiment_score}/100", delta="Bullish Bias" if sentiment_score > 50 else "Bearish Bias")
     with s_col2:
@@ -239,12 +316,8 @@ with tab3:
         forecast_df = generate_forecast(ticker_series)
 
         # Calculate sentiment score for the selected forecast ticker
-        try:
-            forecast_ticker_close = hist_data['Close'][forecast_ticker].dropna().iloc[-1]
-            forecast_ticker_atr = (hist_data['High'][forecast_ticker] - hist_data['Low'][forecast_ticker]).rolling(20).mean().dropna().iloc[-1]
-            forecast_sentiment = calculate_sentiment_score(forecast_ticker_close, forecast_ticker_atr)
-        except Exception:
-            forecast_sentiment = 50
+        forecast_sentiment_data = calculate_sentiment_score(hist_data, forecast_ticker)
+        forecast_sentiment = forecast_sentiment_data.get("score", 50)
 
         # Display sentiment metrics for the selected ticker
         st.markdown("---")
@@ -268,7 +341,7 @@ with tab3:
             fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Upper Band'], name="Upper Volatility Target (2σ)", line=dict(color="#22c55e", width=1, dash="dot")))
 
             # Lower Safety Confidence Boundary
-            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor="rgba(239, 68, 68, 0.1)"))
+            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor='rgba(239, 68, 68, 0.2)'))
 
             fig.update_layout(
                 template="plotly_dark",
