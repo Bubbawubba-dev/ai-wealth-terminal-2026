@@ -48,7 +48,7 @@ def fetch_historical_data(tickers, days=180):
     """Safely fetches multi-ticker daily historical data across the core universe."""
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     try:
-        data = yf.download(tickers, start=start_date, group_by="ticker",
+        data = yf.download(tickers, start=start_date, group_by="ticker")
         if data.empty or 'Close' not in data:
             return pd.DataFrame()
         return data
