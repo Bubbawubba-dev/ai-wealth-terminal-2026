@@ -48,12 +48,43 @@ def fetch_historical_data(tickers, days=180):
     """Safely fetches multi-ticker daily historical data across the core universe."""
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     try:
-        data = yf.download(tickers, start=start_date, group_by="ticker")
-        if data.empty or 'Close' not in data:
+        data = yf.download(tickers, start=start_date, group_by="ticker", progress=False)
+        if data.empty:
             return pd.DataFrame()
         return data
     except Exception:
         return pd.DataFrame()
+
+@st.cache_data(ttl=86400)
+def fetch fundamental metrics(tickers):
+     """Fetches high latency corporate fundamental metrics from yfinance.info. Highly cached."""
+    fundamental_records ={}
+    for ticker in tickers:
+        try:
+            t_ob] = yf.Ticker(ticker)
+            info = t_ob].info
+
+            raw_cap = info.get("marketCap", None)
+            if raw_cap and raw_cap >=1e12:
+                cap_str = f"${raw_cap / 1e12:.2f}T"
+            elif raw_cap and raw _cap >= 1e9:
+                cap_str = f"${raw_cap / le9:.2f}B"
+            elif raw_cap and raw_cap >= le6:
+                cap_str = f"${raw_cap / le6:.2f}M"
+            else:
+                cap_str = "N/A"
+                
+            margin_raw = info.get("profitMargins", None)
+            margin_pct = f"{margin_raw * 100:.2f}%"
+
+            fundamental_records[ticker] = {
+                "Market Cap": cap_str,
+                "P/E Ratio": round(info.get("trailing PE"), 2) if info.get("trailingPE") else"N/A",
+                "Profit Margin": margin_pct
+            }
+        except Exception:
+            fundamental_records[ticker] = {"Market Cap": "N/A", "P/E Ratio": "N/A", "Profit Margin": "N/A"}
+    return fundamental_records
 
 def calculate_momentum_metrics(df_history, tickers):
     """Quantitatively screens data for volume velocity and explosive breakout flags."""
@@ -66,6 +97,7 @@ def calculate_momentum_metrics(df_history, tickers):
             # Handle multi-index columns from yfinance batch download safely
            if ticker not in df_history.column.levels:
                continue
+               
             ticker_df = df_history[ticker].dropna()
             close = ticker_df['Close']
             volume = ticker_df['Volume']
