@@ -48,43 +48,12 @@ def fetch_historical_data(tickers, days=180):
     """Safely fetches multi-ticker daily historical data across the core universe."""
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     try:
-        data = yf.download(tickers, start=start_date, group_by="ticker", progress=False)
-        if data.empty:
+        data = yf.download(tickers, start=start_date, progress=False)
+        if data.empty or 'Close' not in data:
             return pd.DataFrame()
         return data
     except Exception:
         return pd.DataFrame()
-
-@st.cache_data(ttl=86400)
-def fetch fundamental metrics(tickers):
-     """Fetches high latency corporate fundamental metrics from yfinance.info. Highly cached."""
-    fundamental_records ={}
-    for ticker in tickers:
-        try:
-            t_ob] = yf.Ticker(ticker)
-            info = t_ob].info
-
-            raw_cap = info.get("marketCap", None)
-            if raw_cap and raw_cap >=1e12:
-                cap_str = f"${raw_cap / 1e12:.2f}T"
-            elif raw_cap and raw _cap >= 1e9:
-                cap_str = f"${raw_cap / le9:.2f}B"
-            elif raw_cap and raw_cap >= le6:
-                cap_str = f"${raw_cap / le6:.2f}M"
-            else:
-                cap_str = "N/A"
-                
-            margin_raw = info.get("profitMargins", None)
-            margin_pct = f"{margin_raw * 100:.2f}%"
-
-            fundamental_records[ticker] = {
-                "Market Cap": cap_str,
-                "P/E Ratio": round(info.get("trailing PE"), 2) if info.get("trailingPE") else"N/A",
-                "Profit Margin": margin_pct
-            }
-        except Exception:
-            fundamental_records[ticker] = {"Market Cap": "N/A", "P/E Ratio": "N/A", "Profit Margin": "N/A"}
-    return fundamental_records
 
 def calculate_momentum_metrics(df_history, tickers):
     """Quantitatively screens data for volume velocity and explosive breakout flags."""
@@ -95,12 +64,8 @@ def calculate_momentum_metrics(df_history, tickers):
     for ticker in tickers:
         try:
             # Handle multi-index columns from yfinance batch download safely
-           if ticker not in df_history.column.levels:
-               continue
-               
-            ticker_df = df_history[ticker].dropna()
-            close = ticker_df['Close']
-            volume = ticker_df['Volume']
+            close = df_history['Close'][ticker].dropna() if ticker in df_history['Close'] else pd.Series()
+            volume = df_history['Volume'][ticker].dropna() if ticker in df_history['Volume'] else pd.Series()
             high = df_history['High'][ticker].dropna() if ticker in df_history['High'] else pd.Series()
             low = df_history['Low'][ticker].dropna() if ticker in df_history['Low'] else pd.Series()
 
@@ -421,7 +386,7 @@ hist_data = fetch_historical_data(universe)
 top_10_momentum = calculate_momentum_metrics(hist_data, universe)
 
 # Main content tabs
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting", "Wealth Manager"])
+tab1, tab2, tab3 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting"])
 
 # --- TAB 1: MOMENTUM SCANNER ---
 with tab1:
@@ -443,8 +408,7 @@ with tab2:
 
         # Pull precise context variables from selected asset
         try:
-            if viz_ticke3r in historical_date.columns.levels:
-                ticker_close = historical_data[viz_ticker]['Close'].dropna()
+            ticker_close = hist_data['Close'][selected_ticker].dropna().iloc[-1]
             ticker_atr = (hist_data['High'][selected_ticker] - hist_data['Low'][selected_ticker]).rolling(20).mean().dropna().iloc[-1]
         except Exception:
             ticker_close, ticker_atr = 50.0, 2.5
@@ -566,58 +530,6 @@ with tab3:
     else:
         st.error("Core financial tracking dataset structure error.")
 
-# TAB 4: INTEGRATED LONG-TERM INVESTMENT MODALITY
-with tab_macro:
-    st.subheader("Institutional Macro Structural and Fundamental Scanner")
-    st.markdown("This module cross references technical moving averages with corporate value for high conviction allocation.")
-
-    if not historical_data.empty:
-        macro_df = calculate_macro_trends(historical_data, universe)
-
-        if not macro_df.empty:
-            # Actionable filtering UI inside the tab
-            f_col1, f_col2 = st.columns(2)
-            with f_col1:
-                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
-                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
-            with f_col2:
-                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E first", "Highest Margin First"])
-
-            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
-    
-            # Apply dynamic frontend pandas table sorting structures based on choice
-            if pe_filter == "Lowest P/E First":
-                filtered_df = filtered_df.assign(pe_numeric=pd.to_numeric(filtered_df['P/E Ratio'], errors='coerce').fillna(np.inf))
-                filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=['pe_numeric'])
-            elif pe_filter == "Highest Margin First":
-                filtered_df = filtered_df.assign(margin_numeric=pd.to_numeric(filtered_df['Profit Margin'].str.replace('%',''), errors='coerce').fillna(-np.inf))
-                filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=['margin_numeric'])
-            else:
-                filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
-
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-
-            # Interactive visualization context for investment entries
-            st.subheader("Macro Trend Construction Visualization")
-            viz_ticker = st.selectbox("Select Asset for Multi-Month Visual Inspection:", filtered_df["Ticker"].tolist() if not filtered_df.empty else universe)
-
-            try:
-                ticker_close = historical_data["Close"][viz_ticker].dropna()
-                t_50 = ticker_close.rolling(50).mean()
-                t_200 = ticker_close.rolling(200).mean()
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
-                fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA (Cyclical Trend)", line=dict(color="#f59e0b", dash="dash")))
-                fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA (Institutional Base)", line=dict(color="#ef4444", width=2)))
-
-                fig.update_layout(title=f"{viz_ticker} Structural Health Matrix", template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.caption(f"Could not build visualization matrix for {viz_ticker}: {e}")
-        else:
-            st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
-    else:
-        st.error("Engine Fault: Macro framework history unaccessible.")
-
-
+# --- 5. FUTURE EXPANSION HOOKS ---
+st.markdown("---")
+st.caption("⚓ Developer API Core Integrations Status: Webhook Daemon Listening on `localhost:8000` | Alpaca / Interactive Brokers Sandboxed Core: `Offline`")
