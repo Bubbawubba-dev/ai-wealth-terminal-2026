@@ -551,13 +551,13 @@ if not macro_df.empty:
     
     # Apply dynamic frontend pandas table sorting structures based on choice
     if pe_filter == "Lowest P/E First":
-    filtered_df = filtered_df.assign(pe_numeric=pd.to_numeric(filtered_df['P/E Ratio'], errors='coerce').fillna(np.inf))
-    filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=['pe_numeric'])
+        filtered_df = filtered_df.assign(pe_numeric=pd.to_numeric(filtered_df['P/E Ratio'], errors='coerce').fillna(np.inf))
+        filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=['pe_numeric'])
     elif pe_filter == "Highest Margin First":
-    filtered_df = filtered_df.assign(margin_numeric=pd.to_numeric(filtered_df['Profit Margin'].str.replace('%',''), errors='coerce').fillna(-np.inf))
-    filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=['margin_numeric'])
+        filtered_df = filtered_df.assign(margin_numeric=pd.to_numeric(filtered_df['Profit Margin'].str.replace('%',''), errors='coerce').fillna(-np.inf))
+        filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=['margin_numeric'])
     else:
-    filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
+        filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
 
     st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
