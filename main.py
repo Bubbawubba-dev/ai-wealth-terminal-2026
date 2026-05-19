@@ -174,6 +174,155 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             "error": str(e)
         }
 
+def calculate_advanced_sentiment(df_history, ticker):
+    """Wrapper for technical sentiment calculation - returns structured technical sentiment data."""
+    try:
+        sentiment_result = calculate_sentiment_score(df_history, ticker)
+        return {
+            "status": "Active",
+            "score": sentiment_result.get("score", 50),
+            "label": sentiment_result.get("label", "Neutral"),
+            "timestamp": sentiment_result.get("timestamp"),
+            "metrics": sentiment_result.get("metrics", {}),
+            "error": sentiment_result.get("error")
+        }
+    except Exception as e:
+        return {
+            "status": "Error",
+            "score": 50,
+            "label": "Error in calculation",
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc)
+        }
+
+def fetch_reddit_nlp_sentiment(ticker):
+    """
+    Placeholder for Reddit NLP sentiment engine.
+    STUB: Implement with PRAW + VADER or external sentiment API.
+    Returns standardized structure: {status, score (0-100), mentions, error}.
+    """
+    try:
+        # TODO: Integrate PRAW (Python Reddit API Wrapper) + VADER sentiment analyzer
+        # For now, returning mock data structure to prevent crashes
+        return {
+            "status": "Inactive",  # Would be "Active" with real data
+            "score": 50,           # 0-100 sentiment score (VADER compound * 100)
+            "mentions": 0,         # Number of relevant mentions found
+            "error": "Reddit API not configured - using mock data"
+        }
+    except Exception as e:
+        return {
+            "status": "Error",
+            "score": 50,
+            "mentions": 0,
+            "error": f"Reddit sentiment fetch failed: {str(e)}"
+        }
+
+def get_dual_sentiment_matrix(df_history, ticker):
+    """
+    Fetches and packages both sentiment streams independently with full validation & error handling.
+    Returns unified sentiment matrix combining technical + social signals.
+    
+    VALIDATION LAYERS:
+    - Ensures both data sources complete without crashing
+    - Bounds-checks all scores to 0-100 range
+    - Handles missing/invalid data gracefully
+    - Uses consistent timezone (UTC for consistency)
+    """
+    try:
+        # Fetch purely technical/financial sentiment
+        tech_data = calculate_advanced_sentiment(df_history, ticker)
+        
+        # Fetch purely social/NLP sentiment (with fallback if API unavailable)
+        social_data = fetch_reddit_nlp_sentiment(ticker)
+        
+        # VALIDATION LAYER 1: Ensure technical score is valid (0-100)
+        tech_score = tech_data.get("score", 50)
+        tech_score = max(0, min(100, int(tech_score)))  # Bounds check
+        
+        # VALIDATION LAYER 2: Ensure social score is valid (0-100)
+        social_score = social_data.get("score", 50)
+        social_score = max(0, min(100, int(social_score)))  # Bounds check
+        
+        # VALIDATION LAYER 3: Safely extract mentions count (default 0 if missing/invalid)
+        mentions = social_data.get("mentions", 0)
+        mentions = max(0, int(mentions)) if isinstance(mentions, (int, float)) else 0
+        
+        # VALIDATION LAYER 4: Check status field exists and has valid value
+        social_status = social_data.get("status", "Unknown")
+        if social_status not in ["Active", "Inactive", "Error", "Unknown"]:
+            social_status = "Unknown"
+        
+        # Calculate social sentiment label based on 0-100 score with fallback
+        if social_status == "Active" and mentions > 0:
+            s_score = social_score
+            if s_score >= 75: 
+                s_label = "Extreme Greed"
+            elif s_score >= 55: 
+                s_label = "Greed"
+            elif s_score >= 45: 
+                s_label = "Neutral"
+            elif s_score >= 25: 
+                s_label = "Fear"
+            else: 
+                s_label = "Extreme Fear"
+        else:
+            s_label = "Inactive / No Data"
+        
+        # VALIDATION LAYER 5: Compute composite sentiment with proper weighting
+        if social_status == "Active" and mentions > 0:
+            # Both signals valid: weight 50/50
+            composite_score = int((tech_score * 0.5) + (social_score * 0.5))
+        else:
+            # Social data unavailable: rely 100% on technical
+            composite_score = tech_score
+        
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "composite_score": composite_score,
+            "technical": {
+                "score": tech_score,
+                "label": tech_data.get("label", "Neutral"),
+                "status": tech_data.get("status", "Unknown"),
+                "metrics": tech_data.get("metrics", {}),
+                "error": tech_data.get("error")
+            },
+            "social": {
+                "score": social_score,
+                "label": s_label,
+                "mentions": mentions,
+                "status": social_status,
+                "error": social_data.get("error")
+            },
+            "recommendation": _generate_sentiment_recommendation(composite_score)
+        }
+    
+    except Exception as e:
+        # ULTIMATE FALLBACK: Return safe default structure if entire function fails
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "composite_score": 50,
+            "technical": {"score": 50, "label": "Neutral", "status": "Error", "error": str(e)},
+            "social": {"score": 50, "label": "Neutral", "mentions": 0, "status": "Error", "error": str(e)},
+            "recommendation": "Unable to compute sentiment - use default risk parameters",
+            "critical_error": str(e)
+        }
+
+def _generate_sentiment_recommendation(composite_score):
+    """Helper to generate trading recommendation based on composite sentiment score."""
+    if composite_score >= 75:
+        return "🟢 STRONG BUY - Extreme consensus greed signal"
+    elif composite_score >= 55:
+        return "🟢 BUY - Bullish sentiment alignment"
+    elif composite_score >= 45:
+        return "🟡 HOLD - Neutral sentiment, await confirmation"
+    elif composite_score >= 25:
+        return "🔴 SELL - Bearish sentiment alignment"
+    else:
+        return "🔴 STRONG SELL - Extreme consensus fear signal"
+
 def generate_forecast(ticker_series, days_ahead=30):
     """Generates a 30-day forward forecast with upper/lower volatility bands using linear regression."""
     try:
@@ -291,24 +440,36 @@ with tab2:
         st.progress(min(portfolio_allocation_pct / 100, 1.0))
         st.caption(f"This order utilizes **{portfolio_allocation_pct:.1f}%** of overall portfolio margin/cash assets.")
 
-    # Sentiment Pipeline Mock Analysis (Alternative Data Component)
+    # Dual Sentiment Pipeline: Technical + Social NLP
     st.markdown("---")
-    st.subheader("Alternative Data: Sentiment & Order Flow Matrix")
-    s_col1, s_col2 = st.columns(2)
+    st.subheader("Dual Sentiment Matrix: Technical + Social NLP Analysis")
+    s_col1, s_col2, s_col3 = st.columns(3)
 
-    # Get sentiment score for selected ticker
-    sentiment_data = calculate_sentiment_score(hist_data, selected_ticker)
-    sentiment_score = sentiment_data["score"]
-    sentiment_label = sentiment_data["label"]
-    last_updated = sentiment_data["timestamp"]
+    # Get dual sentiment matrix for selected ticker
+    dual_sentiment = get_dual_sentiment_matrix(hist_data, selected_ticker)
     
     with s_col1:
-        st.metric("Aggregated Retail Sentiment Score",
-        value=f"{sentiment_score}/100",
-        delta=sentiment_label,
-        delta_color="normal" if sentiment_score >= 45 else "inverse")
+        st.metric("Technical Sentiment (RSI/MA/Vol)",
+        value=f"{dual_sentiment['technical']['score']}/100",
+        delta=dual_sentiment['technical']['label'])
 
-        st.caption(f"Last updated: {last_updated}")
+    with s_col2:
+        st.metric("Social Sentiment (Reddit NLP)",
+        value=f"{dual_sentiment['social']['score']}/100",
+        delta=f"{dual_sentiment['social']['mentions']} mentions")
+
+    with s_col3:
+        st.metric("Composite Consensus Score",
+        value=f"{dual_sentiment['composite_score']}/100",
+        delta=dual_sentiment['recommendation'])
+
+    st.caption(f"Last updated: {dual_sentiment['timestamp']}")
+    
+    # Display any errors encountered
+    if dual_sentiment['technical'].get('error'):
+        st.info(f"⚠️ Technical calc note: {dual_sentiment['technical']['error']}")
+    if dual_sentiment['social'].get('error'):
+        st.info(f"⚠️ Social data note: {dual_sentiment['social']['error']}")
 
 # --- TAB 3: MATHEMATICAL FORECASTING ---
 with tab3:
@@ -321,18 +482,25 @@ with tab3:
         ticker_series = hist_data['Close'][forecast_ticker].dropna()
         forecast_df = generate_forecast(ticker_series)
 
-        # Calculate sentiment score for the selected forecast ticker
-        forecast_sentiment_data = calculate_sentiment_score(hist_data, forecast_ticker)
-        forecast_sentiment = forecast_sentiment_data.get("score", 50)
+        # Get dual sentiment matrix for the selected forecast ticker
+        forecast_dual_sentiment = get_dual_sentiment_matrix(hist_data, forecast_ticker)
 
         # Display sentiment metrics for the selected ticker
         st.markdown("---")
-        st.subheader(f"Sentiment Analysis: {forecast_ticker}")
-        f_col1, f_col2 = st.columns(2)
+        st.subheader(f"Dual Sentiment Analysis: {forecast_ticker}")
+        f_col1, f_col2, f_col3 = st.columns(3)
         with f_col1:
-            st.metric("Aggregated Retail Sentiment Score", f"{forecast_sentiment}/100", delta="Bullish Bias" if forecast_sentiment > 50 else "Bearish Bias")
+            st.metric("Technical Sentiment", 
+            f"{forecast_dual_sentiment['technical']['score']}/100", 
+            delta=forecast_dual_sentiment['technical']['label'])
         with f_col2:
-            st.metric("Institutional Order Accumulation Rate", "Highly Accelerated" if forecast_sentiment > 60 else "Distribution State")
+            st.metric("Social Sentiment", 
+            f"{forecast_dual_sentiment['social']['score']}/100", 
+            delta=forecast_dual_sentiment['social']['label'])
+        with f_col3:
+            st.metric("Consensus", 
+            f"{forecast_dual_sentiment['composite_score']}/100", 
+            delta=forecast_dual_sentiment['recommendation'])
 
         if forecast_df is not None:
             fig = go.Figure()
