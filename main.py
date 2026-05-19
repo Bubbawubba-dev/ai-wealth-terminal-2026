@@ -552,9 +552,9 @@ st.subheader("Macro Trend Construction Visualization")
 viz_ticker = st.selectbox("Select Asset for Multi-Month Visual Inspection:", filtered_df["Ticker"].tolist() if not filtered_df.empty else universe)
 
 try:
-ticker_close = historical_data["Close"][viz_ticker].dropna()
-t_50 = ticker_close.rolling(50).mean()
-t_200 = ticker_close.rolling(200).mean()
+    ticker_close = historical_data["Close"][viz_ticker].dropna()
+    t_50 = ticker_close.rolling(50).mean()
+    t_200 = ticker_close.rolling(200).mean()
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
