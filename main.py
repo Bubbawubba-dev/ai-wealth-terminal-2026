@@ -556,19 +556,20 @@ try:
     t_50 = ticker_close.rolling(50).mean()
     t_200 = ticker_close.rolling(200).mean()
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
-fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA (Cyclical Trend)", line=dict(color="#f59e0b", dash="dash")))
-fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA (Institutional Base)", line=dict(color="#ef4444", width=2)))
+if fig = go.Figure()
+    fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
+    fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA (Cyclical Trend)", line=dict(color="#f59e0b", dash="dash")))
+    fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA (Institutional Base)", line=dict(color="#ef4444", width=2)))
 
-fig.update_layout(title=f"{viz_ticker} Structural Health Matrix", template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20))
-st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(title=f"{viz_ticker} Structural Health Matrix", template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20))
+    st.plotly_chart(fig, use_container_width=True)
+
 except Exception as e:
-st.caption(f"Could not build visualization matrix for {viz_ticker}: {e}")
+    st.caption(f"Could not build visualization matrix for {viz_ticker}: {e}")
 else:
-st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
+    st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
 else:
-st.error("Engine Fault: Macro framework history inaccessible.")
+    st.error("Engine Fault: Macro framework history inaccessible.")
 # --- 5. FUTURE EXPANSION HOOKS ---
 st.markdown("---")
 st.caption("⚓ Developer API Core Integrations Status: Webhook Daemon Listening on `localhost:8000` | Alpaca / Interactive Brokers Sandboxed Core: `Offline`")
