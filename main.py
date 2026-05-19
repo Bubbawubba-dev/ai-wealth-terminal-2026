@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo 
 
@@ -12,7 +13,7 @@ st.set_page_config(page_title="Wealth Terminal v12.0", layout="wide", page_icon=
 # Custom CSS to improve terminal UI scannability
 st.markdown("""
 <style>
-.metric-card { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; }
+.metric-card { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; margin-bottom: 15px;}
 .stTabs [data-baseweb="tab-list"] { gap: 10px; }
 .stTabs [data-baseweb="tab"] { background-color: #0f172a; border-radius: 4px 4px 0px 0px; padding: 10px 20px; }
 </style>
@@ -108,7 +109,6 @@ def calculate_momentum_metrics(df_history, tickers):
 def calculate_sentiment_score(df_history, ticker, lookback=20):
     """Calculates a synthetic Fear & Greed Sentiment Score (0-100) using technical market proxies (RSI, MA extensions, and Volatility), appended with a timestamp"""
     try:
-        # Extract ticker-specific data safely
         close = df_history['Close'][ticker].dropna()
         high = df_history['High'][ticker].dropna()
         low = df_history['Low'][ticker].dropna()
@@ -122,16 +122,12 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs.iloc[-1]))
-        
-        # RSI naturally scales 0-100. RSI 50 = Neutral.
         rsi_score = np.nan_to_num(rsi, nan=50.0) 
 
         # --- 2. Moving Average Extension Component (Weight: 40%) ---
         sma_20 = close.rolling(window=20).mean().iloc[-1]
         current_price = close.iloc[-1]
         price_to_sma_pct = ((current_price - sma_20) / sma_20) * 100
-        
-        # Normalize: -10% below SMA = 0 (Extreme Fear), +10% above SMA = 100 (Extreme Greed)
         ma_score = np.interp(price_to_sma_pct, [-10, 10], [0, 100])
 
         # --- 3. Volatility Proxy Component (Weight: 20%) ---
@@ -139,9 +135,7 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
         atr_5 = tr.rolling(window=5).mean().iloc[-1]
         atr_20 = tr.rolling(window=20).mean().iloc[-1]
         
-        # Higher current volatility usually correlates with fear/panic selling
         vol_ratio = atr_5 / atr_20 if atr_20 > 0 else 1
-        # Normalize: Ratio > 1.5 = Fear (Score 20), Ratio < 0.8 = Greed (Score 80)
         vol_score = np.interp(vol_ratio, [0.8, 1.5], [80, 20])
 
         # --- 4. Aggregate & Classify ---
@@ -164,9 +158,7 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
                 "volatility_ratio": round(vol_ratio, 2)
             }
         }
-
     except Exception as e:
-        # Failsafe dictionary matching the expected structure
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "ticker": ticker,
@@ -177,359 +169,180 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
 
 def calculate_advanced_sentiment(df_history, ticker):
     """Wrapper for technical sentiment calculation - returns structured technical sentiment data."""
+    sentiment_result = calculate_sentiment_score(df_history, ticker)
+    return {
+        "status": "Active" if "error" not in sentiment_result else "Error",
+        "score": sentiment_result.get("score", 50),
+        "label": sentiment_result.get("label", "Neutral"),
+        "timestamp": sentiment_result.get("timestamp"),
+        "metrics": sentiment_result.get("metrics", {}),
+        "error": sentiment_result.get("error", None)
+    }
+
+# --- NEW QUANT ENGINE: SYSTEMIC RISK MODULES ---
+@st.cache_data(ttl=86400)
+def fetch_financial_ratios(ticker):
+    """Fetches Balance Sheet leverage parameters (Debt/Equity, Current Ratio) safely."""
     try:
-        sentiment_result = calculate_sentiment_score(df_history, ticker)
+        t = yf.Ticker(ticker)
+        info = t.info
+        de_ratio = info.get("debtToEquity", None)
+        curr_ratio = info.get("currentRatio", None)
         return {
-            "status": "Active",
-            "score": sentiment_result.get("score", 50),
-            "label": sentiment_result.get("label", "Neutral"),
-            "timestamp": sentiment_result.get("timestamp"),
-            "metrics": sentiment_result.get("metrics", {}),
-            "error": sentiment_result.get("error")
+            "Ticker": ticker,
+            "Debt to Equity": round(de_ratio / 100, 2) if de_ratio else "N/A", # Normalize if returned as pct
+            "Current Ratio": round(curr_ratio, 2) if curr_ratio else "N/A"
         }
-    except Exception as e:
-        return {
-            "status": "Error",
-            "score": 50,
-            "label": "Error in calculation",
-            "error": str(e),
-            "timestamp": datetime.now(timezone.utc)
-        }
+    except Exception:
+        return {"Ticker": ticker, "Debt to Equity": "N/A", "Current Ratio": "N/A"}
 
-def fetch_reddit_nlp_sentiment(ticker):
-    """
-    Placeholder for Reddit NLP sentiment engine.
-    STUB: Implement with PRAW + VADER or external sentiment API.
-    Returns standardized structure: {status, score (0-100), mentions, error}.
-    """
+def calculate_crowded_trades(df_history, tickers):
+    """Identifies institutional tracking abnormalities via extreme volume velocity z-scores."""
+    crowded_list = []
+    if df_history.empty:
+        return pd.DataFrame()
+        
+    for ticker in tickers:
+        try:
+            volume = df_history['Volume'][ticker].dropna()
+            if len(volume) < 40: continue
+            
+            recent_vol = volume.iloc[-1]
+            hist_mean = volume.iloc[-40:-1].mean()
+            hist_std = volume.iloc[-40:-1].std()
+            
+            z_score = (recent_vol - hist_mean) / hist_std if hist_std > 0 else 0
+            
+            if z_score > 2.0: flag = "⚠️ CRITICAL OVERCROWDING"
+            elif z_score > 1.0: flag = "⚡ Elevated Interest"
+            else: flag = "Normal"
+            
+            crowded_list.append({
+                "Ticker": ticker,
+                "Current Vol": int(recent_vol),
+                "Vol Z-Score": round(z_score, 2),
+                "Crowding Risk": flag
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(crowded_list).sort_values(by="Vol Z-Score", ascending=False)
+
+def calculate_volatility_skew():
+    """Generates a dynamic market skew profile mapping index safe-haven option demands."""
     try:
-        # TODO: Integrate PRAW (Python Reddit API Wrapper) + VADER sentiment analyzer
-        # For now, returning mock data structure to prevent crashes
-        return {
-            "status": "Inactive",  # Would be "Active" with real data
-            "score": 50,           # 0-100 sentiment score (VADER compound * 100)
-            "mentions": 0,         # Number of relevant mentions found
-            "error": "Reddit API not configured - using mock data"
-        }
-    except Exception as e:
-        return {
-            "status": "Error",
-            "score": 50,
-            "mentions": 0,
-            "error": f"Reddit sentiment fetch failed: {str(e)}"
-        }
+        vix = yf.Ticker("^VIX").history(period="1d")["Close"].iloc[-1]
+        vxn = yf.Ticker("^VXN").history(period="1d")["Close"].iloc[-1]
+        skew_ratio = vix / vxn if vxn > 0 else 1.0
+        
+        if skew_ratio > 1.15: label = "⚠️ High Downside Hedging (Broad Market Focus)"
+        elif skew_ratio < 0.85: label = "⚠️ Extreme Tech Sector Hedging Risk"
+        else: label = "Balanced Asset Class Risk Distribution"
+        
+        return {"VIX": round(vix, 2), "VXN": round(vxn, 2), "Ratio": round(skew_ratio, 2), "Status": label}
+    except Exception:
+        return {"VIX": 0.0, "VXN": 0.0, "Ratio": 1.0, "Status": "Data Connection Offline"}
 
-def get_dual_sentiment_matrix(df_history, ticker):
-    """
-    Fetches and packages both sentiment streams independently with full validation & error handling.
-    Returns unified sentiment matrix combining technical + social signals.
-    
-    VALIDATION LAYERS:
-    - Ensures both data sources complete without crashing
-    - Bounds-checks all scores to 0-100 range
-    - Handles missing/invalid data gracefully
-    - Uses consistent timezone (UTC for consistency)
-    """
-    try:
-        # Fetch purely technical/financial sentiment
-        tech_data = calculate_advanced_sentiment(df_history, ticker)
-        
-        # Fetch purely social/NLP sentiment (with fallback if API unavailable)
-        social_data = fetch_reddit_nlp_sentiment(ticker)
-        
-        # VALIDATION LAYER 1: Ensure technical score is valid (0-100)
-        tech_score = tech_data.get("score", 50)
-        tech_score = max(0, min(100, int(tech_score)))  # Bounds check
-        
-        # VALIDATION LAYER 2: Ensure social score is valid (0-100)
-        social_score = social_data.get("score", 50)
-        social_score = max(0, min(100, int(social_score)))  # Bounds check
-        
-        # VALIDATION LAYER 3: Safely extract mentions count (default 0 if missing/invalid)
-        mentions = social_data.get("mentions", 0)
-        mentions = max(0, int(mentions)) if isinstance(mentions, (int, float)) else 0
-        
-        # VALIDATION LAYER 4: Check status field exists and has valid value
-        social_status = social_data.get("status", "Unknown")
-        if social_status not in ["Active", "Inactive", "Error", "Unknown"]:
-            social_status = "Unknown"
-        
-        # Calculate social sentiment label based on 0-100 score with fallback
-        if social_status == "Active" and mentions > 0:
-            s_score = social_score
-            if s_score >= 75: 
-                s_label = "Extreme Greed"
-            elif s_score >= 55: 
-                s_label = "Greed"
-            elif s_score >= 45: 
-                s_label = "Neutral"
-            elif s_score >= 25: 
-                s_label = "Fear"
-            else: 
-                s_label = "Extreme Fear"
-        else:
-            s_label = "Inactive / No Data"
-        
-        # VALIDATION LAYER 5: Compute composite sentiment with proper weighting
-        if social_status == "Active" and mentions > 0:
-            # Both signals valid: weight 50/50
-            composite_score = int((tech_score * 0.5) + (social_score * 0.5))
-        else:
-            # Social data unavailable: rely 100% on technical
-            composite_score = tech_score
-        
-        return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "ticker": ticker,
-            "composite_score": composite_score,
-            "technical": {
-                "score": tech_score,
-                "label": tech_data.get("label", "Neutral"),
-                "status": tech_data.get("status", "Unknown"),
-                "metrics": tech_data.get("metrics", {}),
-                "error": tech_data.get("error")
-            },
-            "social": {
-                "score": social_score,
-                "label": s_label,
-                "mentions": mentions,
-                "status": social_status,
-                "error": social_data.get("error")
-            },
-            "recommendation": _generate_sentiment_recommendation(composite_score)
-        }
-    
-    except Exception as e:
-        # ULTIMATE FALLBACK: Return safe default structure if entire function fails
-        return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "ticker": ticker,
-            "composite_score": 50,
-            "technical": {"score": 50, "label": "Neutral", "status": "Error", "error": str(e)},
-            "social": {"score": 50, "label": "Neutral", "mentions": 0, "status": "Error", "error": str(e)},
-            "recommendation": "Unable to compute sentiment - use default risk parameters",
-            "critical_error": str(e)
-        }
 
-def _generate_sentiment_recommendation(composite_score):
-    """Helper to generate trading recommendation based on composite sentiment score."""
-    if composite_score >= 75:
-        return "🟢 STRONG BUY - Extreme consensus greed signal"
-    elif composite_score >= 55:
-        return "🟢 BUY - Bullish sentiment alignment"
-    elif composite_score >= 45:
-        return "🟡 HOLD - Neutral sentiment, await confirmation"
-    elif composite_score >= 25:
-        return "🔴 SELL - Bearish sentiment alignment"
-    else:
-        return "🔴 STRONG SELL - Extreme consensus fear signal"
-
-def generate_forecast(ticker_series, days_ahead=30):
-    """Generates a 30-day forward forecast with upper/lower volatility bands using linear regression."""
-    try:
-        if len(ticker_series) < 30:
-            return None
-        
-        # Use last 60 days for linear regression trend
-        recent_data = ticker_series.iloc[-60:].reset_index(drop=True)
-        x = np.arange(len(recent_data))
-        y = recent_data.values
-        
-        # Linear regression fit
-        z = np.polyfit(x, y, 1)
-        p = np.poly1d(z)
-        
-        # Calculate standard deviation of residuals for bands
-        residuals = y - p(x)
-        std_dev = np.std(residuals)
-        
-        # Generate forecast
-        future_x = np.arange(len(recent_data), len(recent_data) + days_ahead)
-        forecast_values = p(future_x)
-        upper_band = forecast_values + (2 * std_dev)
-        lower_band = forecast_values - (2 * std_dev)
-        
-        # Create dataframe with forecast dates
-        last_date = ticker_series.index[-1]
-        future_dates = pd.date_range(start=last_date + timedelta(days=1), periods=days_ahead, freq='D')
-        
-        forecast_df = pd.DataFrame({
-            'Forecast': forecast_values,
-            'Upper Band': upper_band,
-            'Lower Band': lower_band
-        }, index=future_dates)
-        
-        return forecast_df
-    except Exception as e:
-        st.error(f"Forecast generation error: {str(e)}")
-        return None
-
-# --- 4. MAIN APPLICATION INITIALIZATION ---
-# Initialize session state variables
-if "account_size" not in st.session_state:
-    st.session_state.account_size = 100000.0
-if "risk_pct" not in st.session_state:
-    st.session_state.risk_pct = 2.0
-
-# Sidebar configuration
-with st.sidebar:
-    st.title("⚙️ Terminal Configuration")
-    st.session_state.account_size = st.number_input("Account Size ($)", value=st.session_state.account_size, step=1000.0)
-    st.session_state.risk_pct = st.slider("Risk Per Trade (%)", min_value=0.5, max_value=5.0, value=st.session_state.risk_pct, step=0.5)
-
-account_size = st.session_state.account_size
-risk_pct = st.session_state.risk_pct
-
-# Fetch data
+# --- 4. INTERFACE DISPLAY ORCHESTRATION ---
+st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
 hist_data = fetch_historical_data(universe)
-top_10_momentum = calculate_momentum_metrics(hist_data, universe)
 
-# Main content tabs
-tab1, tab2, tab3 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting"])
+# Establish Dashboard Navigation Tabs
+tab_main, tab_risk = st.tabs(["🚀 Momentum Engine", "⚠️ Systemic Risk & Tail Protection"])
 
-# --- TAB 1: MOMENTUM SCANNER ---
-with tab1:
-    st.subheader("Real-Time Momentum & Volatility Breakout Scanner")
-    st.markdown("Identifies explosive momentum candidates using 20-day returns, volume velocity, and ATR breakout signals.")
+with tab_main:
+    st.header("Core Universe Momentum Leaderboard")
+    if not hist_data.empty:
+        momentum_df = calculate_momentum_metrics(hist_data, universe)
+        st.dataframe(momentum_df, use_container_width=True, hide_index=True)
+        
+        st.subheader("Single Ticker Sentiment Check")
+        selected_ticker = st.selectbox("Select Target Ticker", universe)
+        sentiment = calculate_advanced_sentiment(hist_data, selected_ticker)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Technical Sentiment Score", sentiment["score"])
+        with col2:
+            st.metric("Risk Label", sentiment["label"])
+        with col3:
+            st.metric("Last Evaluated Zone (HK)", str(sentiment["timestamp"]))
+    else:
+        st.error("Error connecting to primary market data providers.")
+
+with tab_risk:
+    st.header("Tail-Risk & Black Swan Mitigation Metrics")
     
-    if not top_10_momentum.empty:
-        st.dataframe(top_10_momentum, use_container_width=True, hide_index=True)
-    else:
-        st.warning("No momentum data available. Check data fetch status.")
+    # Row 1: Skew Meter & Corporate Debt Metrics Configuration
+    col_left, col_right = st.columns([1, 2])
+    
+    with col_left:
+        st.subheader("📊 Cross-Asset Volatility Skew Meter")
+        skew_data = calculate_volatility_skew()
+        
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>Tail Risk Skew Profile</h4>
+            <p><b>Market State:</b> {skew_data['Status']}</p>
+            <hr style="border-color:#334155;">
+            <p>🔴 <b>S&P 500 VIX:</b> {skew_data['VIX']}</p>
+            <p>🔵 <b>Nasdaq 100 VXN:</b> {skew_data['VXN']}</p>
+            <p>🎛️ <b>VIX/VXN Skew Ratio:</b> {skew_data['Ratio']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col_right:
+        st.subheader("🏛️ Corporate Debt & Solvency Ratios")
+        target_co = st.selectbox("Analyze Balance Sheet Leverage for Asset:", universe, index=8)
+        
+        with st.spinner("Parsing SEC Fundamental Filings..."):
+            ratios = fetch_financial_ratios(target_co)
+            
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric(label=f"{target_co} Debt-to-Equity (D/E)", value=ratios["Debt to Equity"], 
+                      help="Measures relative company leverage. Metrics over 2.0 indicate heightened structural tail-risk.")
+        with c2:
+            st.metric(label=f"{target_co} Current Ratio", value=ratios["Current Ratio"], 
+                      help="Measures short term liquidity cushion. Values below 1.0 indicate operational distress potential.")
 
-# --- TAB 2: POSITION SIZER & RISK ARCHITECT ---
-with tab2:
-    st.subheader("Smart Position Sizing & Strategic Entry Engine")
-
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        selected_ticker = st.selectbox("Target Execution Security", options=top_10_momentum["Ticker"].tolist() if not top_10_momentum.empty else ["PLTR"])
-
-        # Pull precise context variables from selected asset
-        try:
-            ticker_close = hist_data['Close'][selected_ticker].dropna().iloc[-1]
-            ticker_atr = (hist_data['High'][selected_ticker] - hist_data['Low'][selected_ticker]).rolling(20).mean().dropna().iloc[-1]
-        except Exception:
-            ticker_close, ticker_atr = 50.0, 2.5
-
-        entry_price = st.number_input("Target Execution Entry Price ($)", min_value=0.01, value=float(ticker_close), step=0.1)
-        stop_loss = st.number_input("Systemic Stop-Loss Floor Level ($)", min_value=0.01, value=float(entry_price - (2 * ticker_atr)), step=0.1)
-
-    # Quantitative risk sizing math engine calculations
-    risk_dollars = account_size * (risk_pct / 100)
-    per_share_risk = entry_price - stop_loss
-
-    if per_share_risk > 0:
-        shares_to_buy = int(risk_dollars // per_share_risk)
-        total_notional_cost = shares_to_buy * entry_price
-        portfolio_allocation_pct = (total_notional_cost / account_size) * 100
-    else:
-        shares_to_buy, total_notional_cost, portfolio_allocation_pct = 0, 0.0, 0.0
-
-    with col2:
-        st.markdown(f"### Allocation Matrix Blueprint: **{selected_ticker}**")
-
-        m_col1, m_col2, m_col3 = st.columns(3)
-        with m_col1:
-            st.metric("Absolute Capital at Risk", f"${risk_dollars:,.2f}")
-        with m_col2:
-            st.metric("Calculated Allocation Quantity", f"{shares_to_buy:,} Shares")
-        with m_col3:
-            st.metric("Total Order Value", f"${total_notional_cost:,.2f}")
-
-        st.progress(min(portfolio_allocation_pct / 100, 1.0))
-        st.caption(f"This order utilizes **{portfolio_allocation_pct:.1f}%** of overall portfolio margin/cash assets.")
-
-    # Dual Sentiment Pipeline: Technical + Social NLP
     st.markdown("---")
-    st.subheader("Dual Sentiment Matrix: Technical + Social NLP Analysis")
-    s_col1, s_col2, s_col3 = st.columns(3)
-
-    # Get dual sentiment matrix for selected ticker
-    dual_sentiment = get_dual_sentiment_matrix(hist_data, selected_ticker)
     
-    with s_col1:
-        st.metric("Technical Sentiment (RSI/MA/Vol)",
-        value=f"{dual_sentiment['technical']['score']}/100",
-        delta=dual_sentiment['technical']['label'])
-
-    with s_col2:
-        st.metric("Social Sentiment (Reddit NLP)",
-        value=f"{dual_sentiment['social']['score']}/100",
-        delta=f"{dual_sentiment['social']['mentions']} mentions")
-
-    with s_col3:
-        st.metric("Composite Consensus Score",
-        value=f"{dual_sentiment['composite_score']}/100",
-        delta=dual_sentiment['recommendation'])
-
-    st.caption(f"Last updated: {dual_sentiment['timestamp']}")
+    # Row 2: Crowded Trades Tracker & Correlation Space
+    col_bot_left, col_bot_right = st.columns(2)
     
-    # Display any errors encountered
-    if dual_sentiment['technical'].get('error'):
-        st.info(f"⚠️ Technical calc note: {dual_sentiment['technical']['error']}")
-    if dual_sentiment['social'].get('error'):
-        st.info(f"⚠️ Social data note: {dual_sentiment['social']['error']}")
-
-# --- TAB 3: MATHEMATICAL FORECASTING ---
-with tab3:
-    st.subheader("Statistical Time-Series Trend Projections")
-    st.markdown("Projects historical patterns forward 30 days using linear regressions and standard volatility deviation limits.")
-
-    forecast_ticker = st.selectbox("Select Projective Modeling Target", options=universe, index=0)
-
-    if not hist_data.empty and forecast_ticker in hist_data['Close']:
-        ticker_series = hist_data['Close'][forecast_ticker].dropna()
-        forecast_df = generate_forecast(ticker_series)
-
-        # Get dual sentiment matrix for the selected forecast ticker
-        forecast_dual_sentiment = get_dual_sentiment_matrix(hist_data, forecast_ticker)
-
-        # Display sentiment metrics for the selected ticker
-        st.markdown("---")
-        st.subheader(f"Dual Sentiment Analysis: {forecast_ticker}")
-        f_col1, f_col2, f_col3 = st.columns(3)
-        with f_col1:
-            st.metric("Technical Sentiment", 
-            f"{forecast_dual_sentiment['technical']['score']}/100", 
-            delta=forecast_dual_sentiment['technical']['label'])
-        with f_col2:
-            st.metric("Social Sentiment", 
-            f"{forecast_dual_sentiment['social']['score']}/100", 
-            delta=forecast_dual_sentiment['social']['label'])
-        with f_col3:
-            st.metric("Consensus", 
-            f"{forecast_dual_sentiment['composite_score']}/100", 
-            delta=forecast_dual_sentiment['recommendation'])
-
-        if forecast_df is not None:
-            fig = go.Figure()
-
-            # Historical Frame Trace
-            fig.add_trace(go.Scatter(x=ticker_series.index[-60:], y=ticker_series.values[-60:], name="Historical Reality", line=dict(color="#38bdf8", width=2.5)))
-
-            # Center Mathematical Mean Projection
-            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Forecast'], name="Mean Statistical Path", line=dict(color="#e2e8f0", dash="dash")))
-
-            # Upper Confidence Threshold Boundary
-            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Upper Band'], name="Upper Volatility Target (2σ)", line=dict(color="#22c55e", width=1, dash="dot")))
-
-            # Lower Safety Confidence Boundary
-            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor='rgba(239, 68, 68, 0.1)'))
-
-            fig.update_layout(
-                template="plotly_dark",
-                margin=dict(l=20, r=20, t=20, b=20),
-                height=450,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    with col_bot_left:
+        st.subheader("🔥 Crowded Trades & Volume Volatility Acceleration")
+        if not hist_data.empty:
+            crowd_df = calculate_crowded_trades(hist_data, universe)
+            st.dataframe(crowd_df, use_container_width=True, hide_index=True)
         else:
-            st.error("Insufficient rolling sample points to compute modeling matrix.")
-    else:
-        st.error("Core financial tracking dataset structure error.")
-
-# --- 5. FUTURE EXPANSION HOOKS ---
-st.markdown("---")
-st.caption("⚓ Developer API Core Integrations Status: Webhook Daemon Listening on `localhost:8000` | Alpaca / Interactive Brokers Sandboxed Core: `Offline`")
+            st.info("Awaiting Historical Input Parameters")
+            
+    with col_bot_right:
+        st.subheader("🌐 Systemic Multi-Asset Correlation Convergence Matrix")
+        if not hist_data.empty and 'Close' in hist_data:
+            try:
+                # Calculate the Pearson correlation matrix across the active historical dataset
+                corr_matrix = hist_data['Close'].corr()
+                
+                fig = px.imshow(
+                    corr_matrix,
+                    text_auto=False,
+                    aspect="auto",
+                    color_continuous_scale="RdBu_r",
+                    labels=dict(color="Correlation Coefficient")
+                )
+                fig.update_layout(
+                    margin=dict(l=20, r=20, t=20, b=20),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_color="#f8fafc"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("ℹ️ When correlations converge uniformly toward 1.0 (Dark Red), diversification fail-safes disintegrate, indicating impending market structural fragility.")
+            except Exception as e:
+                st.error(f"Correlation Processing Interrupted: {e}")
+        else:
+            st.info("Historical data matrix format incomplete.")
