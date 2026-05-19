@@ -532,54 +532,56 @@ with tab3:
 
 # TAB 4: INTEGRATED LONG-TERM INVESTMENT MODALITY
 with tab_macro:
-    st.subheader("Institutional Macro Structural Scanner")
-    st.markdown("This module monitors structural market health via structural 50-day and 200-day moving averages.")
+    st.subheader("Institutional Macro Structural and Fundamental Scanner")
+    st.markdown("This module cross references technical moving averages with corporate value for high conviction allocation.")
 
-if not historical_data.empty:
-    macro_df = calculate_macro_trends(historical_data, universe)
+    if not historical_data.empty:
+        macro_df = calculate_macro_trends(historical_data, universe)
 
-if not macro_df.empty:
-    # Actionable filtering UI inside the tab
-    f_col1, f_col2 = st.columns(2)
-    with f_col1:
-        regimes = ["All"] + list(macro_df["Macro Structure"].unique())
-    selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
-    with f_col2:
-        pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E first", "Highest Margin First"])
+        if not macro_df.empty:
+            # Actionable filtering UI inside the tab
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+            with f_col2:
+                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E first", "Highest Margin First"])
 
-    filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
     
-    # Apply dynamic frontend pandas table sorting structures based on choice
-    if pe_filter == "Lowest P/E First":
-        filtered_df = filtered_df.assign(pe_numeric=pd.to_numeric(filtered_df['P/E Ratio'], errors='coerce').fillna(np.inf))
-        filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=['pe_numeric'])
-    elif pe_filter == "Highest Margin First":
-        filtered_df = filtered_df.assign(margin_numeric=pd.to_numeric(filtered_df['Profit Margin'].str.replace('%',''), errors='coerce').fillna(-np.inf))
-        filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=['margin_numeric'])
+            # Apply dynamic frontend pandas table sorting structures based on choice
+            if pe_filter == "Lowest P/E First":
+                filtered_df = filtered_df.assign(pe_numeric=pd.to_numeric(filtered_df['P/E Ratio'], errors='coerce').fillna(np.inf))
+                filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=['pe_numeric'])
+            elif pe_filter == "Highest Margin First":
+                filtered_df = filtered_df.assign(margin_numeric=pd.to_numeric(filtered_df['Profit Margin'].str.replace('%',''), errors='coerce').fillna(-np.inf))
+                filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=['margin_numeric'])
+            else:
+                filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
+
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+
+            # Interactive visualization context for investment entries
+            st.subheader("Macro Trend Construction Visualization")
+            viz_ticker = st.selectbox("Select Asset for Multi-Month Visual Inspection:", filtered_df["Ticker"].tolist() if not filtered_df.empty else universe)
+
+            try:
+                ticker_close = historical_data["Close"][viz_ticker].dropna()
+                t_50 = ticker_close.rolling(50).mean()
+                t_200 = ticker_close.rolling(200).mean()
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
+                fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA (Cyclical Trend)", line=dict(color="#f59e0b", dash="dash")))
+                fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA (Institutional Base)", line=dict(color="#ef4444", width=2)))
+
+                fig.update_layout(title=f"{viz_ticker} Structural Health Matrix", template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.caption(f"Could not build visualization matrix for {viz_ticker}: {e}")
+        else:
+            st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
     else:
-        filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
-
-    st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-
-# Interactive visualization context for investment entries
-st.subheader("Macro Trend Construction Visualization")
-viz_ticker = st.selectbox("Select Asset for Multi-Month Visual Inspection:", filtered_df["Ticker"].tolist() if not filtered_df.empty else universe)
-
-try:
-ticker_close = historical_data["Close"][viz_ticker].dropna()
-t_50 = ticker_close.rolling(50).mean()
-t_200 = ticker_close.rolling(200).mean()
-
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
-fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA (Cyclical Trend)", line=dict(color="#f59e0b", dash="dash")))
-fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA (Institutional Base)", line=dict(color="#ef4444", width=2)))
-
-fig.update_layout(title=f"{viz_ticker} Structural Health Matrix", template="plotly_dark", xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20))
-st.plotly_chart(fig, use_container_width=True)
-except Exception as e:
-st.caption(f"Could not build visualization matrix for {viz_ticker}: {e}")
-else:
-st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
+        st.error("Engine Fault: Macro framework history unaccessible.")
 else:
 st.error("Engine Fault: Macro framework history inaccessible.")
