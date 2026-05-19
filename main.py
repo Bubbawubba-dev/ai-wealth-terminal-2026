@@ -296,9 +296,10 @@ with tab2:
     s_col1, s_col2 = st.columns(2)
 
     # Get sentiment score for selected ticker
-    sentiment_data = calculate_advanced_sentiment_score(hist_data, selected_ticker)
+    sentiment_data = calculate_sentiment_score(hist_data, selected_ticker)
     sentiment_score = sentiment_data["score"]
     sentiment_label = sentiment_data["label"]
+    last_updated = sentiment_data["timestamp"]
     
     with s_col1:
         st.metric("Aggregated Retail Sentiment Score",
@@ -307,8 +308,6 @@ with tab2:
         delta_color="normal" if sentiment_score >= 45 else "inverse")
 
         st.caption(f"Last updated: {last_updated}")
-                  
-                  
 
 # --- TAB 3: MATHEMATICAL FORECASTING ---
 with tab3:
@@ -347,7 +346,7 @@ with tab3:
             fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Upper Band'], name="Upper Volatility Target (2σ)", line=dict(color="#22c55e", width=1, dash="dot")))
 
             # Lower Safety Confidence Boundary
-            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor='rgba(239, 68, 68, 0.2)'))
+            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor='rgba(239, 68, 68, 0.1)'))
 
             fig.update_layout(
                 template="plotly_dark",
