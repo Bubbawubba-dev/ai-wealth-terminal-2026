@@ -38,10 +38,10 @@ if not check_password():
 # --- 3. BACKEND & DATA ENGINES ---
 @st.cache_data(ttl=3600)
 def get_base_universe():
-"""Returns a stable, responsive base core universe of volatile/momentum equities."""
-return ["MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
-"RKLB", "SNDK", "CYBR", "INTC", "F", "PLTR", "SOUN", "BBAI", "NOW", "CIFR",
-"AVGO", "MU", "STX", "LITE"]
+    """Returns a stable, responsive base core universe of volatile/momentum equities."""
+    return ["MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
+    "RKLB", "SNDK", "CYBR", "INTC", "F", "PLTR", "SOUN", "BBAI", "NOW", "CIFR",
+    "AVGO", "MU", "STX", "LITE"]
 
 @st.cache_data(ttl=1800)
 def fetch_historical_data(tickers, days=730): # 730 days lookback needed for accurate 200D SMA metrics
