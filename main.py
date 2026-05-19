@@ -583,5 +583,5 @@ with tab_macro:
             st.warning("Insufficient structural pricing matrix to process 200-day horizons.")
     else:
         st.error("Engine Fault: Macro framework history unaccessible.")
-else:
-st.error("Engine Fault: Macro framework history inaccessible.")
+
+
