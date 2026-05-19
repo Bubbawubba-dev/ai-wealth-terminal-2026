@@ -48,7 +48,7 @@ def fetch_historical_data(tickers, days=180):
     """Safely fetches multi-ticker daily historical data across the core universe."""
     start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     try:
-        data = yf.download(tickers, start=start_date, progress=False)
+        data = yf.download(tickers, start=start_date, group_by="ticker",
         if data.empty or 'Close' not in data:
             return pd.DataFrame()
         return data
@@ -64,8 +64,11 @@ def calculate_momentum_metrics(df_history, tickers):
     for ticker in tickers:
         try:
             # Handle multi-index columns from yfinance batch download safely
-            close = df_history['Close'][ticker].dropna() if ticker in df_history['Close'] else pd.Series()
-            volume = df_history['Volume'][ticker].dropna() if ticker in df_history['Volume'] else pd.Series()
+           if ticker not in df_history.column.levels:
+               continue
+            ticker_df = df_history[ticker].dropna()
+            close = ticker_df['Close']
+            volume = ticker_df['Volume']
             high = df_history['High'][ticker].dropna() if ticker in df_history['High'] else pd.Series()
             low = df_history['Low'][ticker].dropna() if ticker in df_history['Low'] else pd.Series()
 
@@ -408,7 +411,8 @@ with tab2:
 
         # Pull precise context variables from selected asset
         try:
-            ticker_close = hist_data['Close'][selected_ticker].dropna().iloc[-1]
+            if viz_ticke3r in historical_date.columns.levels:
+                ticker_close = historical_data[viz_ticker]['Close'].dropna()
             ticker_atr = (hist_data['High'][selected_ticker] - hist_data['Low'][selected_ticker]).rolling(20).mean().dropna().iloc[-1]
         except Exception:
             ticker_close, ticker_atr = 50.0, 2.5
