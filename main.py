@@ -532,20 +532,20 @@ with tab3:
 
 # TAB 4: INTEGRATED LONG-TERM INVESTMENT MODALITY
 with tab_macro:
-st.subheader("Institutional Macro Structural Scanner")
-st.markdown("This module monitors structural market health via structural 50-day and 200-day moving averages.")
+    st.subheader("Institutional Macro Structural Scanner")
+    st.markdown("This module monitors structural market health via structural 50-day and 200-day moving averages.")
 
 if not historical_data.empty:
-macro_df = calculate_macro_trends(historical_data, universe)
+    macro_df = calculate_macro_trends(historical_data, universe)
 
 if not macro_df.empty:
-# Actionable filtering UI inside the tab
-regimes = ["All"] + list(macro_df["Macro Structure"].unique())
-selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+    # Actionable filtering UI inside the tab
+    regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+    selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
 
-filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+    filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
 
-st.dataframe(filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True), use_container_width=True, hide_index=True)
+    st.dataframe(filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True), use_container_width=True, hide_index=True)
 
 # Interactive visualization context for investment entries
 st.subheader("Macro Trend Construction Visualization")
