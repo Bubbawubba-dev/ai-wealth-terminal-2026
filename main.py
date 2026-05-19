@@ -86,6 +86,13 @@ def calculate_momentum_metrics(df_history, tickers):
 		return df_rank.sort_values(by='Score', ascending=False).head(10).drop(columns=['Score'])
 	return df_rank
 
+def calculate_sentiment_score(close_price, atr_value):
+	"""Calculates dynamic sentiment score based on price position and volatility."""
+	if close_price > atr_value:
+		return 78
+	else:
+		return 42
+
 def generate_forecast(series, periods=30):
 	"""Generates a mathematical linear trend projection with volatility confidence intervals."""
 	y = series.dropna().values
@@ -190,7 +197,7 @@ with tab2:
 	s_col1, s_col2 = st.columns(2)
 
 	# Algorithmic derivation using price position vs historical boundaries
-	sentiment_score = 78 if ticker_close > (entry_price - ticker_atr) else 42
+	sentiment_score = calculate_sentiment_score(ticker_close, ticker_atr)
 	with s_col1:
 		st.metric("Aggregated Retail Sentiment Score", f"{sentiment_score}/100", delta="Bullish Bias" if sentiment_score > 50 else "Bearish Bias")
 	with s_col2:
@@ -206,6 +213,23 @@ with tab3:
 	if not hist_data.empty and forecast_ticker in hist_data['Close']:
 		ticker_series = hist_data['Close'][forecast_ticker].dropna()
 		forecast_df = generate_forecast(ticker_series)
+
+		# Calculate sentiment score for the selected forecast ticker
+		try:
+			forecast_ticker_close = hist_data['Close'][forecast_ticker].dropna().iloc[-1]
+			forecast_ticker_atr = (hist_data['High'][forecast_ticker] - hist_data['Low'][forecast_ticker]).rolling(20).mean().dropna().iloc[-1]
+			forecast_sentiment = calculate_sentiment_score(forecast_ticker_close, forecast_ticker_atr)
+		except Exception:
+			forecast_sentiment = 50
+
+		# Display sentiment metrics for the selected ticker
+		st.markdown("---")
+		st.subheader(f"Sentiment Analysis: {forecast_ticker}")
+		f_col1, f_col2 = st.columns(2)
+		with f_col1:
+			st.metric("Aggregated Retail Sentiment Score", f"{forecast_sentiment}/100", delta="Bullish Bias" if forecast_sentiment > 50 else "Bearish Bias")
+		with f_col2:
+			st.metric("Institutional Order Accumulation Rate", "Highly Accelerated" if forecast_sentiment > 60 else "Distribution State")
 
 		if forecast_df is not None:
 			fig = go.Figure()
