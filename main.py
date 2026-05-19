@@ -17,7 +17,24 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. BACKEND & DATA ENGINES ---
+# --- 2. SECURITY ---
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.sidebar.title("🔐 Access")
+        pwd = st.sidebar.text_input("Access Key", type="password")
+        if st.sidebar.button("Unlock"):
+            if pwd == st.secrets.get("APP_PASSWORD", "1234"):
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.sidebar.error("❌ Invalid")
+        return False
+    return True
+
+if not check_password():
+    st.stop()
+
+# --- 3. BACKEND & DATA ENGINES ---
 @st.cache_data(ttl=3600)
 def get_base_universe():
     """Returns a stable, responsive base core universe of volatile/momentum equities."""
@@ -117,7 +134,7 @@ def generate_forecast(series, periods=30):
         "Lower Band": lower_band
     }, index=future_dates)
 
-# --- 3. FRONTEND UI & WORKFLOWS ---
+# --- 4. FRONTEND UI & WORKFLOWS ---
 st.title("🎛️ Institutional Wealth Terminal")
 st.caption("Quantitative Screening, Risk Optimization Analytics, & Advanced Time-Series Projections")
 
@@ -244,7 +261,7 @@ with tab3:
             fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Upper Band'], name="Upper Volatility Target (2σ)", line=dict(color="#22c55e", width=1, dash="dot")))
 
             # Lower Safety Confidence Boundary
-            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor='rgba(239, 68, 68, 0.2)'))
+            fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Lower Band'], name="Lower Volatility Boundary (2σ)", line=dict(color="#ef4444", width=1, dash="dot"), fill='tonexty', fillcolor="rgba(239, 68, 68, 0.1)"))
 
             fig.update_layout(
                 template="plotly_dark",
@@ -258,6 +275,6 @@ with tab3:
     else:
         st.error("Core financial tracking dataset structure error.")
 
-# --- 4. FUTURE EXPANSION HOOKS ---
+# --- 5. FUTURE EXPANSION HOOKS ---
 st.markdown("---")
 st.caption("⚓ Developer API Core Integrations Status: Webhook Daemon Listening on `localhost:8000` | Alpaca / Interactive Brokers Sandboxed Core: `Offline`")
