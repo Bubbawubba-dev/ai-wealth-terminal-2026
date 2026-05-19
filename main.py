@@ -45,8 +45,8 @@ def get_base_universe():
 
 @st.cache_data(ttl=1800)
 def fetch_historical_data(tickers, days=730): # 730 days lookback needed for accurate 200D SMA metrics
-"""Safely fetches multi-ticker daily historical data across the core universe."""
-start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    """Safely fetches multi-ticker daily historical data across the core universe."""
+    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 try:
 data = yf.download(tickers, start=start_date, progress=False)
 if data.empty or 'Close' not in data:
@@ -57,8 +57,8 @@ return pd.DataFrame()
 
 @st.cache_data(ttl=86400)
 def fetch_fundamental_metrics(tickers):
-"""Fetches high-latency corporate fundamental metrics from yfinance.info. Highly cached."""
-fundamental_records = {}
+    """Fetches high-latency corporate fundamental metrics from yfinance.info. Highly cached."""
+    fundamental_records = {}
 for ticker in tickers:
 try:
 t_obj = yf.Ticker(ticker)
