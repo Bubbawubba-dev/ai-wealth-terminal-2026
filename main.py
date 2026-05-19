@@ -538,8 +538,8 @@ with tab_macro:
 if not historical_data.empty:
     macro_df = calculate_macro_trends(historical_data, universe)
 
-    if not macro_df.empty:
-        # Actionable filtering UI inside the tab
+if not macro_df.empty:
+    # Actionable filtering UI inside the tab
     f_col1, f_col2 = st.columns(2)
     with f_col1:
         regimes = ["All"] + list(macro_df["Macro Structure"].unique())
