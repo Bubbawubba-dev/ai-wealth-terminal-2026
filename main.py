@@ -296,13 +296,19 @@ with tab2:
     s_col1, s_col2 = st.columns(2)
 
     # Get sentiment score for selected ticker
-    sentiment_data = calculate_sentiment_score(hist_data, selected_ticker)
-    sentiment_score = sentiment_data.get("score", 50)
+    sentiment_data = calculate_advanced_sentiment_score(hist_data, selected_ticker)
+    sentiment_score = sentiment_data["score"]
+    sentiment_label = sentiment_data["label"]
     
     with s_col1:
-        st.metric("Aggregated Retail Sentiment Score", f"{sentiment_score}/100", delta="Bullish Bias" if sentiment_score > 50 else "Bearish Bias")
-    with s_col2:
-        st.metric("Institutional Order Accumulation Rate", "Highly Accelerated" if sentiment_score > 60 else "Distribution State")
+        st.metric("Aggregated Retail Sentiment Score",
+        value=f"{sentiment_score}/100",
+        delta=sentiment_label,
+        delta_color="normal" if sentiment_score >= 45 else "inverse")
+
+        st.caption(f"Last updated: {last_updated}")
+                  
+                  
 
 # --- TAB 3: MATHEMATICAL FORECASTING ---
 with tab3:
