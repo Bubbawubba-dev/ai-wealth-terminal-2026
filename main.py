@@ -103,68 +103,75 @@ def calculate_momentum_metrics(df_history, tickers):
         return df_rank.sort_values(by='Score', ascending=False).head(10).drop(columns=['Score'])
     return df_rank
 
-def calculate_sentiment_score(close_price, atr_value):
-    """Calculates dynamic sentiment score based on price position and volatility."""
-    if close_price > atr_value:
-        return 78
-    else:
-        return 42
+def calculate_sentiment_score(df_history, ticker, lookback=20):
+    """Calculates a synthetic Fear & Greed Sentiment Score (0-100) using technical market proxies (RSI, MA extensions, and Volatility), appended with a timestamp"""
+    try:
+        # Extract ticker-specific data safely
+        close = df_history['Close'][ticker].dropna()
+        high = df_history['High'][ticker].dropna()
+        low = df_history['Low'][ticker].dropna()
 
-def generate_forecast(series, periods=30):
-    """Generates a mathematical linear trend projection with volatility confidence intervals."""
-    y = series.dropna().values
-    x = np.arange(len(y))
-    if len(y) < 10:
-        return None
+        if len(close) < lookback + 1:
+            raise ValueError("Insufficient data points for rolling calculations.")
 
-    # Fit linear trajectory matrix
-    slope, intercept = np.polyfit(x, y, 1)
-    future_x = np.arange(len(y), len(y) + periods)
-    forecast_base = slope * future_x + intercept
+        # --- 1. RSI Component (Weight: 40%) ---
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs.iloc[-1]))
+        
+        # RSI naturally scales 0-100. RSI 50 = Neutral.
+        rsi_score = np.nan_to_num(rsi, nan=50.0) 
 
-    # Calculate rolling statistical standard deviation variance for upper/lower limits
-    resid_std = np.std(y - (slope * x + intercept))
-    upper_band = forecast_base + (2 * resid_std)
-    lower_band = forecast_base - (2 * resid_std)
+        # --- 2. Moving Average Extension Component (Weight: 40%) ---
+        sma_20 = close.rolling(window=20).mean().iloc[-1]
+        current_price = close.iloc[-1]
+        price_to_sma_pct = ((current_price - sma_20) / sma_20) * 100
+        
+        # Normalize: -10% below SMA = 0 (Extreme Fear), +10% above SMA = 100 (Extreme Greed)
+        ma_score = np.interp(price_to_sma_pct, [-10, 10], [0, 100])
 
-    future_dates = [series.index[-1] + timedelta(days=i) for i in range(1, periods + 1)]
-    return pd.DataFrame({
-        "Forecast": forecast_base,
-        "Upper Band": upper_band,
-        "Lower Band": lower_band
-    }, index=future_dates)
+        # --- 3. Volatility Proxy Component (Weight: 20%) ---
+        tr = np.maximum((high - low), np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))))
+        atr_5 = tr.rolling(window=5).mean().iloc[-1]
+        atr_20 = tr.rolling(window=20).mean().iloc[-1]
+        
+        # Higher current volatility usually correlates with fear/panic selling
+        vol_ratio = atr_5 / atr_20 if atr_20 > 0 else 1
+        # Normalize: Ratio > 1.5 = Fear (Score 20), Ratio < 0.8 = Greed (Score 80)
+        vol_score = np.interp(vol_ratio, [0.8, 1.5], [80, 20])
 
-# --- 4. FRONTEND UI & WORKFLOWS ---
-st.title("🎛️ Institutional Wealth Terminal")
-st.caption("Quantitative Screening, Risk Optimization Analytics, & Advanced Time-Series Projections")
+        # --- 4. Aggregate & Classify ---
+        composite_score = int(np.average([rsi_score, ma_score, vol_score], weights=[0.4, 0.4, 0.2]))
+        
+        if composite_score >= 75: label = "Extreme Greed"
+        elif composite_score >= 55: label = "Greed"
+        elif composite_score >= 45: label = "Neutral"
+        elif composite_score >= 25: label = "Fear"
+        else: label = "Extreme Fear"
 
-# Sidebar - Global Core Input Parameters
-st.sidebar.header("Global Operational Parameters")
-account_size = st.sidebar.number_input("Total Portfolio Equity Capital ($)", min_value=1000, value=50000, step=5000)
-risk_pct = st.sidebar.slider("Maximum Account Risk Exposure Per Trade (%)", 0.1, 5.0, 1.0, 0.1)
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "score": composite_score,
+            "label": label,
+            "metrics": {
+                "rsi_14": round(rsi_score, 1),
+                "ma_deviation_pct": round(price_to_sma_pct, 2),
+                "volatility_ratio": round(vol_ratio, 2)
+            }
+        }
 
-# Real-time Background Engine Execution
-universe = get_base_universe()
-hist_data = fetch_historical_data(universe)
-top_10_momentum = calculate_momentum_metrics(hist_data, universe)
-
-# Main Application Workspaces
-tab1, tab2, tab3 = st.tabs(["🚀 Momentum Engine", "🛡️ Advanced Risk Architect", "🔮 Mathematical Forecasting"])
-
-# --- TAB 1: MOMENTUM & VOLATILITY SCANNER ---
-with tab1:
-    st.subheader("Quantitative Scanned Momentum Leaderboard")
-    st.markdown("Real-time sorting analyzing compounding **20-day returns** alongside **volume acceleration metrics**.")
-
-    if not top_10_momentum.empty:
-        st.dataframe(
-            top_10_momentum.style.highlight_max(subset=["Vol Velocity (x)"], color="#1e3a8a")
-            .highlight_between(subset=["TR/ATR Ratio"], left=1.5, right=10.0, color="#7f1d1d"),
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.warning("Database pipeline error: Historical structural nodes unretrievable.")
-
+    except Exception as e:
+        # Failsafe dictionary matching the expected structure
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "score": 50,
+            "label": "Neutral (Insufficient Data)",
+            "error": str(e)
+        }
 # --- TAB 2: POSITION SIZER & RISK ARCHITECT ---
 with tab2:
     st.subheader("Smart Position Sizing & Strategic Entry Engine")
