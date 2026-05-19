@@ -1,4 +1,3 @@
-import plotly.express as px
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -186,16 +185,7 @@ def calculate_advanced_sentiment(df_history, ticker):
             "label": sentiment_result.get("label", "Neutral"),
             "timestamp": sentiment_result.get("timestamp"),
             "metrics": sentiment_result.get("metrics", {}),
-            "error": None
-        }
-    except Exception as e:
-        return {
-            "status": "Error",
-            "score": 50,
-            "label": "Neutral (Error)",
-            "timestamp": datetime.now(ZoneInfo("Asia/Hong_Kong")),
-            "metrics": {},
-            "error": str(e)
+            "error": sentiment_result.get("error")
         }
     except Exception as e:
         return {
@@ -395,110 +385,6 @@ universe = get_base_universe()
 hist_data = fetch_historical_data(universe)
 top_10_momentum = calculate_momentum_metrics(hist_data, universe)
 
-# --- 4. INTERFACE DISPLAY ORCHESTRATION ---
-st.title("📈 Wealth Terminal v12.0")
-universe = get_base_universe()
-hist_data = fetch_historical_data(universe)
-
-# Establish Dashboard Navigation Tabs
-tab_main, tab_risk = st.tabs(["🚀 Momentum Engine", "⚠️ Systemic Risk & Tail Protection"])
-
-with tab_main:
-    st.header("Core Universe Momentum Leaderboard")
-    if not hist_data.empty:
-        momentum_df = calculate_momentum_metrics(hist_data, universe)
-        st.dataframe(momentum_df, use_container_width=True, hide_index=True)
-        
-        st.subheader("Single Ticker Sentiment Check")
-        selected_ticker = st.selectbox("Select Target Ticker", universe)
-        sentiment = calculate_advanced_sentiment(hist_data, selected_ticker)
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Technical Sentiment Score", sentiment["score"])
-        with col2:
-            st.metric("Risk Label", sentiment["label"])
-        with col3:
-            st.metric("Last Evaluated Zone (HK)", str(sentiment["timestamp"]))
-    else:
-        st.error("Error connecting to primary market data providers.")
-
-with tab_risk:
-    st.header("Tail-Risk & Black Swan Mitigation Metrics")
-    
-    # Row 1: Skew Meter & Corporate Debt Metrics Configuration
-    col_left, col_right = st.columns()
-    
-    with col_left:
-        st.subheader("📊 Cross-Asset Volatility Skew Meter")
-        skew_data = calculate_volatility_skew()
-        
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4>Tail Risk Skew Profile</h4>
-            <p><b>Market State:</b> {skew_data['Status']}</p>
-            <hr style="border-color:#334155;">
-            <p>🔴 <b>S&P 500 VIX:</b> {skew_data['VIX']}</p>
-            <p>🔵 <b>Nasdaq 100 VXN:</b> {skew_data['VXN']}</p>
-            <p>🎛️ <b>VIX/VXN Skew Ratio:</b> {skew_data['Ratio']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col_right:
-        st.subheader("🏛️ Corporate Debt & Solvency Ratios")
-        target_co = st.selectbox("Analyze Balance Sheet Leverage for Asset:", universe, index=8)
-        
-        with st.spinner("Parsing SEC Fundamental Filings..."):
-            ratios = fetch_financial_ratios(target_co)
-            
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric(label=f"{target_co} Debt-to-Equity (D/E)", value=ratios["Debt to Equity"], 
-                      help="Measures relative company leverage. Metrics over 2.0 indicate heightened structural tail-risk.")
-        with c2:
-            st.metric(label=f"{target_co} Current Ratio", value=ratios["Current Ratio"], 
-                      help="Measures short term liquidity cushion. Values below 1.0 indicate operational distress potential.")
-
-    st.markdown("---")
-    
-    # Row 2: Crowded Trades Tracker & Correlation Space
-    col_bot_left, col_bot_right = st.columns(2)
-    
-    with col_bot_left:
-        st.subheader("🔥 Crowded Trades & Volume Volatility Acceleration")
-        if not hist_data.empty:
-            crowd_df = calculate_crowded_trades(hist_data, universe)
-            st.dataframe(crowd_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("Awaiting Historical Input Parameters")
-            
-    with col_bot_right:
-        st.subheader("🌐 Systemic Multi-Asset Correlation Convergence Matrix")
-        if not hist_data.empty and 'Close' in hist_data:
-            try:
-                # Calculate the Pearson correlation matrix across the active historical dataset
-                corr_matrix = hist_data['Close'].corr()
-                
-                fig = px.imshow(
-                    corr_matrix,
-                    text_auto=False,
-                    aspect="auto",
-                    color_continuous_scale="RdBu_r",
-                    labels=dict(color="Correlation Coefficient")
-                )
-                fig.update_layout(
-                    margin=dict(l=20, r=20, t=20, b=20),
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font_color="#f8fafc"
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                st.caption("ℹ️ When correlations converge uniformly toward 1.0 (Dark Red), diversification fail-safes disintegrate, indicating impending market structural fragility.")
-            except Exception as e:
-                st.error(f"Correlation Processing Interrupted: {e}")
-        else:
-            st.info("Historical data matrix format incomplete.")
-            
 # Main content tabs
 tab1, tab2, tab3 = st.tabs(["📊 Momentum Scanner", "💰 Position Sizer", "🔮 Forecasting"])
 
