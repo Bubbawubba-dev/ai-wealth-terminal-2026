@@ -689,7 +689,7 @@ with tab_sentiment:
 
 # TAB 3
 with tab_macro:
-    st.subheader("Institutional Macro Structural & Fundamental Scanner")
+    st.markdown("## <span style='color:#a78bfa;'>🏛️ Macro Wealth Framework</span>", unsafe_allow_html=True)
     st.markdown("This module cross-references technical moving averages with corporate value parameters.")
 
     if not historical_data.empty:
