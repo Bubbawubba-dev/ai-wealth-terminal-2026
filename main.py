@@ -7,16 +7,101 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Wealth Terminal v12.0", layout="wide", page_icon="📈")
+st.set_page_config(
+    page_title="Wealth Terminal v13.0",
+    layout="wide",
+    page_icon="📈"
+)
 
-# Custom CSS
+# --- GLOBAL UI THEME (v13.0) ---
 st.markdown("""
 <style>
-.metric-card { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; }
-.stTabs [data-baseweb="tab-list"] { gap: 10px; }
-.stTabs [data-baseweb="tab"] { background-color: #0f172a; border-radius: 4px 4px 0px 0px; padding: 10px 20px; }
+html, body, [class*="css"]  {
+    font-family: 'Inter', sans-serif;
+}
+
+/* Background */
+body {
+    background: radial-gradient(circle at top, #020617, #020617);
+}
+
+/* Glass cards */
+.glass-card {
+    background: rgba(15,23,42,0.85);
+    border-radius: 18px;
+    padding: 18px 20px;
+    border: 1px solid rgba(148,163,184,0.25);
+    backdrop-filter: blur(14px);
+}
+
+/* Neon KPI */
+.neon-kpi {
+    font-size: 30px;
+    font-weight: 700;
+    color: #38bdf8;
+    text-shadow: 0 0 14px rgba(56,189,248,0.9);
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 10px;
+}
+.stTabs [data-baseweb="tab"] {
+    background: rgba(15,23,42,0.9);
+    border-radius: 12px 12px 0 0;
+    padding: 10px 20px;
+    border: 1px solid rgba(51,65,85,0.8);
+    transition: 0.2s ease;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(30,64,175,0.6);
+}
+.stTabs [aria-selected="true"] {
+    background: rgba(56,189,248,0.18);
+    border-bottom: 2px solid #38bdf8;
+    color: #e5e7eb !important;
+}
+
+/* Buttons */
+.stButton>button {
+    background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+    border: none;
+    padding: 0.5rem 1.1rem;
+    border-radius: 999px;
+    color: white;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: 0.2s ease;
+}
+.stButton>button:hover {
+    transform: translateY(-1px) scale(1.03);
+    box-shadow: 0 0 18px rgba(56,189,248,0.7);
+}
+
+/* Metric cards */
+.metric-card {
+    background: rgba(15,23,42,0.9);
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(51,65,85,0.9);
+}
+
+/* Dataframe tweaks */
+[data-testid="stDataFrame"] {
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+/* Subtle divider */
+.hr-glow {
+    border: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+    margin: 0.8rem 0 1.2rem 0;
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 # --- 2. SECURITY ---
 def check_password():
