@@ -414,8 +414,8 @@ with tab_sentiment:
 
     if sentiment["status"] == "Active":
 
-           # --- SENTIMENT GAUGE ---
-gauge_fig = go.Figure(go.Indicator(
+        # --- SENTIMENT GAUGE ---
+    gauge_fig = go.Figure(go.Indicator(
     mode="gauge+number",
     value=sentiment["score"],
     title={"text": "Sentiment Gauge (0–100)"},
