@@ -1,34 +1,3 @@
-
-
-
-
-
-
-
-
-A
-Today
-You said
-import streamlit as st.txt
-
-Plain Text
-
-
-ensure python code has proper indentation and syntax -
-Copilot said
-Annie — your file is again corrupted by the Edge metadata block at the bottom, and your Python code is also missing indentation inside several functions (for example, check_password() is completely unindented).
-
-So I’m going to give you a fully corrected, clean, properly‑indented version of your entire script — with ZERO metadata, ZERO corruption, and 100% valid Python syntax.
-
-Below is the fixed, safe, indentation‑corrected version of your code.
-
-✅ CLEAN + FULLY INDENTED + SYNTAX‑SAFE main.py
-You can paste this directly into GitHub — it contains NO hidden metadata.
-
-Code
-
-
-Copy
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -98,17 +67,337 @@ def fetch_fundamental_metrics(tickers):
             if raw_cap and raw_cap >= 1e12:
                 cap_str = f"${raw_cap / 1e12:.2f}T"
             elif raw_cap and raw_cap >= 1e9:
+                cap_str = f"${raw_cap / 1e9:.2f}B"
+            elif raw_cap and raw_cap >= 1e6:
+                cap_str = f"${raw_cap / 1e6:.2f}M"
+            else:
+                cap_str = "N/A"
 
+            margin_raw = info.get("profitMargins", None)
+            margin_pct = f"{margin_raw * 100:.2f}%" if margin_raw is not None else "N/A"
 
+            fundamental_records[ticker] = {
+                "Market Cap": cap_str,
+                "P/E Ratio": round(info.get("trailingPE"), 2) if info.get("trailingPE") else "N/A",
+                "Profit Margin": margin_pct
+            }
+        except Exception:
+            fundamental_records[ticker] = {
+                "Market Cap": "N/A",
+                "P/E Ratio": "N/A",
+                "Profit Margin": "N/A"
+            }
+    return fundamental_records
 
+def calculate_momentum_metrics(df_history, tickers):
+    rankings = []
+    if df_history.empty:
+        return pd.DataFrame()
 
+    available_tickers = df_history.columns.get_level_values(0).unique()
 
+    for ticker in tickers:
+        try:
+            if ticker not in available_tickers:
+                continue
 
+            ticker_df = df_history[ticker].dropna()
+            if len(ticker_df) < 20:
+                continue
 
-Edit in a page
+            close = ticker_df['Close']
+            volume = ticker_df['Volume']
+            high = ticker_df['High']
+            low = ticker_df['Low']
 
+            perf_20d = ((close.iloc[-1] - close.iloc[-20]) / close.iloc[-20]) * 100
+            recent_vol_avg = volume.iloc[-20:-1].mean()
+            vol_velocity = volume.iloc[-1] / recent_vol_avg if recent_vol_avg > 0 else 1.0
 
-Message Copilot
-Message Copilot
+            tr = np.maximum(
+                (high - low),
+                np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+            )
+            atr_20 = tr.rolling(20).mean().iloc[-1]
+            current_tr = tr.iloc[-1]
 
+            atr_ratio = current_tr / atr_20 if atr_20 > 0 else 1.0
+            is_breakout = atr_ratio >= 1.5
 
+            rankings.append({
+                "Ticker": ticker,
+                "Price": round(close.iloc[-1], 2),
+                "20D Return (%)": round(perf_20d, 2),
+                "Vol Velocity (x)": round(vol_velocity, 2),
+                "ATR (20)": round(atr_20, 2),
+                "TR/ATR Ratio": round(atr_ratio, 2),
+                "Explosive Flag": "🔥 BREAKOUT" if is_breakout else "Normal"
+            })
+        except Exception:
+            continue
+
+    df_rank = pd.DataFrame(rankings)
+    if not df_rank.empty:
+        df_rank["Score"] = df_rank["20D Return (%)"] * df_rank["Vol Velocity (x)"]
+        return df_rank.sort_values(by="Score", ascending=False).head(10).drop(columns=["Score"])
+
+    return df_rank
+
+def calculate_sentiment_score(df_history, ticker, lookback=20):
+    try:
+        available_tickers = df_history.columns.get_level_values(0).unique()
+        if ticker not in available_tickers:
+            raise ValueError(f"Ticker {ticker} not found.")
+
+        ticker_df = df_history[ticker].dropna()
+        close = ticker_df["Close"]
+        high = ticker_df["High"]
+        low = ticker_df["Low"]
+
+        if len(close) < lookback + 1:
+            raise ValueError("Insufficient data.")
+
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs.iloc[-1]))
+        rsi_score = np.nan_to_num(rsi, nan=50.0)
+
+        sma_20 = close.rolling(20).mean().iloc[-1]
+        current_price = close.iloc[-1]
+        price_to_sma_pct = ((current_price - sma_20) / sma_20) * 100
+        ma_score = np.interp(price_to_sma_pct, [-10, 10], [0, 100])
+
+        tr = np.maximum(
+            (high - low),
+            np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+        )
+        atr_5 = tr.rolling(5).mean().iloc[-1]
+        atr_20 = tr.rolling(20).mean().iloc[-1]
+        vol_ratio = atr_5 / atr_20 if atr_20 > 0 else 1
+        vol_score = np.interp(vol_ratio, [0.8, 1.5], [80, 20])
+
+        composite_score = int(np.average(
+            [rsi_score, ma_score, vol_score],
+            weights=[0.4, 0.4, 0.2]
+        ))
+
+        if composite_score >= 75:
+            label = "Extreme Greed"
+        elif composite_score >= 55:
+            label = "Greed"
+        elif composite_score >= 45:
+            label = "Neutral"
+        elif composite_score >= 25:
+            label = "Fear"
+        else:
+            label = "Extreme Fear"
+
+        return {
+            "timestamp": datetime.now(ZoneInfo("Asia/Hong_Kong")),
+            "ticker": ticker,
+            "score": composite_score,
+            "label": label,
+            "metrics": {
+                "rsi_14": round(rsi_score, 1),
+                "ma_deviation_pct": round(price_to_sma_pct, 2),
+                "volatility_ratio": round(vol_ratio, 2)
+            }
+        }
+
+    except Exception as e:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ticker": ticker,
+            "score": 50,
+            "label": "Neutral (Insufficient Data)",
+            "error": str(e)
+        }
+
+def calculate_advanced_sentiment(df_history, ticker):
+    try:
+        sentiment_result = calculate_sentiment_score(df_history, ticker)
+        return {
+            "status": "Active",
+            "score": sentiment_result.get("score", 50),
+            "label": sentiment_result.get("label", "Neutral"),
+            "timestamp": sentiment_result.get("timestamp"),
+            "metrics": sentiment_result.get("metrics", {}),
+            "error": sentiment_result.get("error")
+        }
+    except Exception as e:
+        return {"status": "Error", "score": 50, "label": "Error", "error": str(e)}
+
+def calculate_macro_trends(df_history, tickers, fundamental_data):
+    macro_data = []
+    if df_history.empty:
+        return pd.DataFrame()
+
+    available_tickers = df_history.columns.get_level_values(0).unique()
+
+    for ticker in tickers:
+        try:
+            if ticker not in available_tickers:
+                continue
+
+            ticker_df = df_history[ticker].dropna()
+            close = ticker_df["Close"]
+            if len(close) < 200:
+                continue
+
+            sma_50 = close.rolling(50).mean().iloc[-1]
+            sma_200 = close.rolling(200).mean().iloc[-1]
+            current_price = close.iloc[-1]
+
+            dist_from_sma200 = ((current_price - sma_200) / sma_200) * 100
+            perf_6month = (
+                (current_price - close.iloc[-126]) / close.iloc[-126]
+            ) * 100 if len(close) >= 126 else 0.0
+
+            if current_price > sma_50 and sma_50 > sma_200:
+                regime = "Bullish Extension 🚀"
+            elif current_price > sma_200 and sma_50 < sma_200:
+                regime = "Accumulation Phase ⏳"
+            elif current_price < sma_200 and sma_50 > sma_200:
+                regime = "Distribution/Correction ⚠️"
+            else:
+                regime = "Bear Market Cycle 📉"
+
+            f_metrics = fundamental_data.get(ticker, {
+                "Market Cap": "N/A",
+                "P/E Ratio": "N/A",
+                "Profit Margin": "N/A"
+            })
+
+            macro_data.append({
+                "Ticker": ticker,
+                "Current Price": round(current_price, 2),
+                "Market Cap": f_metrics["Market Cap"],
+                "P/E Ratio": f_metrics["P/E Ratio"],
+                "Profit Margin": f_metrics["Profit Margin"],
+                "Dist. from 200D (%)": round(dist_from_sma200, 2),
+                "6M Return (%)": round(perf_6month, 2),
+                "Macro Structure": regime
+            })
+
+        except Exception:
+            continue
+
+    return pd.DataFrame(macro_data)
+
+# --- 4. USER INTERFACE PLATFORM ---
+st.title("📈 Wealth Terminal v12.0")
+universe = get_base_universe()
+
+with st.spinner("Syncing technical historical structures..."):
+    historical_data = fetch_historical_data(universe)
+
+with st.spinner("Extracting corporate fundamental structures..."):
+    fundamental_cache = fetch_fundamental_metrics(universe)
+
+tab_momentum, tab_sentiment, tab_macro = st.tabs([
+    "⚡ Short-Term Momentum",
+    "🔮 Technical Sentiment",
+    "🏛️ Macro Wealth & Long-Term Investment"
+])
+
+# TAB 1
+with tab_momentum:
+    st.subheader("Explosive Short-Term Breakout Scanner")
+    if not historical_data.empty:
+        momentum_df = calculate_momentum_metrics(historical_data, universe)
+        if not momentum_df.empty:
+            st.dataframe(momentum_df, use_container_width=True, hide_index=True)
+        else:
+            st.warning("No assets matched momentum lookup thresholds.")
+    else:
+        st.error("Failed to load short-term historical metrics.")
+
+# TAB 2
+with tab_sentiment:
+    st.subheader("Dynamic Fear & Greed Structural Proxies")
+    selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
+
+    if not historical_data.empty:
+        sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
+        if sentiment["status"] == "Active":
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
+            with col2:
+                st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
+            with col3:
+                st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
+        else:
+            st.error(f"Engine Fault: {sentiment['error']}")
+
+# TAB 3
+with tab_macro:
+    st.subheader("Institutional Macro Structural & Fundamental Scanner")
+    st.markdown("This module cross-references technical moving averages with corporate value parameters.")
+
+    if not historical_data.empty:
+        macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
+
+        if not macro_df.empty:
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+            with f_col2:
+                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E First", "Highest Margin First"])
+
+            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+
+            if pe_filter == "Lowest P/E First":
+                filtered_df = filtered_df.assign(
+                    pe_numeric=pd.to_numeric(filtered_df["P/E Ratio"], errors="coerce").fillna(np.inf)
+                )
+                filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=["pe_numeric"])
+
+            elif pe_filter == "Highest Margin First":
+                filtered_df = filtered_df.assign(
+                    margin_numeric=pd.to_numeric(filtered_df["Profit Margin"].str.replace("%", ""), errors="coerce").fillna(-np.inf)
+                )
+                filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=["margin_numeric"])
+
+            else:
+                filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
+
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+
+            st.subheader("Macro Trend Construction Visualization")
+            viz_ticker = st.selectbox(
+                "Select Asset for Multi-Month Visual Inspection:",
+                filtered_df["Ticker"].tolist() if not filtered_df.empty else universe
+            )
+
+            try:
+                available_tickers = historical_data.columns.get_level_values(0).unique()
+                if viz_ticker in available_tickers:
+                    ticker_close = historical_data[viz_ticker]["Close"].dropna()
+                    t_50 = ticker_close.rolling(50).mean()
+                    t_200 = ticker_close.rolling(200).mean()
+
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
+                    fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA", line=dict(color="#f59e0b", dash="dash")))
+                    fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA", line=dict(color="#ef4444", width=2)))
+
+                    fig.update_layout(
+                        title=f"{viz_ticker} Structural Health Matrix",
+                        template="plotly_dark",
+                        xaxis_rangeslider_visible=False,
+                        margin=dict(l=20, r=20, t=40, b=20)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.caption(f"No pricing structures found for {viz_ticker}")
+            except Exception as e:
+                st.caption(f"Could not build visualization for {viz_ticker}: {e}")
+
+        else:
+            st.warning("Insufficient structural pricing matrix for 200-day horizons.")
+    else:
+        st.error("Engine Fault: Macro framework history inaccessible.")
