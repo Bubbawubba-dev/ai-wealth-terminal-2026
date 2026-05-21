@@ -368,41 +368,7 @@ def backtest_swing_strategy(df_history, ticker):
 
     except Exception:
         return None
-
-
-# --- SENTIMENT VISUALIZATION ENGINE ---
-st.markdown("### Sentiment Structure Visualization")
-
-try:
-    ticker_df = historical_data[selected_ticker].dropna()
-    close = ticker_df["Close"]
-    high = ticker_df["High"]
-    low = ticker_df["Low"]
-
-    # --- RSI 14 ---
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    rsi_series = 100 - (100 / (1 + rs))
-
-    fig_rsi = go.Figure()
-    fig_rsi.add_trace(go.Scatter(
-        x=rsi_series.index,
-        y=rsi_series,
-        mode="lines",
-        name="RSI 14",
-        line=dict(color="#38bdf8", width=2)
-    ))
-    fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
-    fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-    fig_rsi.update_layout(
-        title=f"{selected_ticker} — RSI (14)",
-        template="plotly_dark",
-        height=250,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
+        
     # --- PRICE vs SMA20 ---
     sma20 = close.rolling(20).mean()
 
