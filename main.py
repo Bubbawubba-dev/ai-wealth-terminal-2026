@@ -286,6 +286,90 @@ def calculate_macro_trends(df_history, tickers, fundamental_data):
 
     return pd.DataFrame(macro_data)
 
+def backtest_swing_strategy(df_history, ticker):
+    try:
+        available_tickers = df_history.columns.get_level_values(0).unique()
+        if ticker not in available_tickers:
+            return None
+
+        ticker_df = df_history[ticker].dropna()
+        close = ticker_df["Close"]
+        high = ticker_df["High"]
+        low = ticker_df["Low"]
+
+        if len(close) < 60:  # need enough bars
+            return None
+
+        # RSI
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi_series = 100 - (100 / (1 + rs))
+
+        # SMA20
+        sma20 = close.rolling(20).mean()
+
+        # Vol ratio ATR5 / ATR20
+        tr = np.maximum(
+            (high - low),
+            np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+        )
+        atr5 = tr.rolling(5).mean()
+        atr20 = tr.rolling(20).mean()
+        vol_ratio_series = atr5 / atr20
+
+        returns = []
+        position = None
+        entry_price = None
+
+        for i in range(1, len(close)):
+            # ENTRY (same logic as your tab)
+            if (
+                position is None and
+                close.iloc[i] > sma20.iloc[i] and
+                rsi_series.iloc[i] > 50 and
+                vol_ratio_series.iloc[i] > 1.0
+            ):
+                position = "LONG"
+                entry_price = close.iloc[i]
+
+            # EXIT
+            elif (
+                position == "LONG" and (
+                    close.iloc[i] < sma20.iloc[i] or
+                    rsi_series.iloc[i] < 45 or
+                    vol_ratio_series.iloc[i] < 0.8
+                )
+            ):
+                trade_ret = (close.iloc[i] - entry_price) / entry_price
+                returns.append(trade_ret)
+                position = None
+                entry_price = None
+
+        if not returns:
+            return {
+                "Ticker": ticker,
+                "Avg Trade Return (%)": 0.0,
+                "Win Rate (%)": 0.0,
+                "Total Trades": 0
+            }
+
+        returns_arr = np.array(returns)
+        avg_return = float(np.mean(returns_arr) * 100)
+        win_rate = float((np.sum(returns_arr > 0) / len(returns_arr)) * 100)
+
+        return {
+            "Ticker": ticker,
+            "Avg Trade Return (%)": round(avg_return, 2),
+            "Win Rate (%)": round(win_rate, 1),
+            "Total Trades": int(len(returns_arr))
+        }
+
+    except Exception:
+        return None
+
+
 # --- SENTIMENT VISUALIZATION ENGINE ---
 st.markdown("### Sentiment Structure Visualization")
 
