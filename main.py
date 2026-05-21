@@ -503,7 +503,7 @@ tab_momentum, tab_sentiment, tab_macro = st.tabs([
 
 # TAB 1
 with tab_momentum:
-    st.markdown("## <span style='color:#38bdf8;'>⚡ Short‑Term Momentum Scanner</span>", unsafe_allow_html=True)
+    st.markdown("## <span style='color:#38bdf8;'> Short‑Term Momentum Scanner</span>", unsafe_allow_html=True)
     if not historical_data.empty:
         momentum_df = calculate_momentum_metrics(historical_data, universe)
         if not momentum_df.empty:
@@ -515,7 +515,7 @@ with tab_momentum:
 
 # TAB 2: TECHNICAL SENTIMENT
 with tab_sentiment:
-    st.subheader("Dynamic Fear & Greed Structural Proxies")
+    st.markdown("## <span style='color:#f472b6;'> Technical Sentiment Engine</span>", unsafe_allow_html=True)
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
 
     if not historical_data.empty:
