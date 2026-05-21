@@ -505,6 +505,48 @@ with tab_sentiment:
                 fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20,
                                                name="SMA20",
                                                line=dict(color="#f59e0b", dash="dash")))
+
+                # --- SIGNAL ARROWS ---
+buy_signals = []
+sell_signals = []
+
+for i in range(1, len(close)):
+    # BUY SIGNAL
+    if (
+        close.iloc[i] > sma20.iloc[i] and
+        close.iloc[i-1] <= sma20.iloc[i-1] and
+        rsi_series.iloc[i] > 50 and
+        vol_ratio_series.iloc[i] > 1.0
+    ):
+        buy_signals.append((close.index[i], close.iloc[i]))
+
+    # SELL SIGNAL
+    if (
+        close.iloc[i] < sma20.iloc[i] and
+        close.iloc[i-1] >= sma20.iloc[i-1] or
+        rsi_series.iloc[i] < 45
+    ):
+        sell_signals.append((close.index[i], close.iloc[i]))
+
+# Plot arrows
+for t, p in buy_signals:
+    fig_price.add_annotation(
+        x=t, y=p,
+        text="⬆ BUY",
+        showarrow=True,
+        arrowhead=1,
+        font=dict(color="#22c55e")
+    )
+
+for t, p in sell_signals:
+    fig_price.add_annotation(
+        x=t, y=p,
+        text="⬇ SELL",
+        showarrow=True,
+        arrowhead=1,
+        font=dict(color="#ef4444")
+    )
+
                 fig_price.update_layout(title=f"{selected_ticker} — Price vs SMA20",
                                         template="plotly_dark", height=300)
 
