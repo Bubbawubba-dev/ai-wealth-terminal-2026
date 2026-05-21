@@ -166,4 +166,14 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
 
         sma_20 = close.rolling(20).mean().iloc[-1]
         current_price = close.iloc[-1]
+
+        # ✅ FIXED LINE — now valid Python
+        price_to_sma_pct = ((current_price - sma_20) / sma_20) * 100
+
+        ma_score = np.interp(price_to_sma_pct, [-10, 10], [0, 100])
+
+        tr = np.maximum(
+            (high - low),
+
+        current_price = close.iloc[-1]
         price_to_sma_pct = ((current_price - sma_20) / sma_20) *
