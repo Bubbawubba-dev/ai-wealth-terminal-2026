@@ -7,144 +7,33 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(
-    page_title="Wealth Terminal v13.0",
-    layout="wide",
-    page_icon="📈"
-)
+st.set_page_config(page_title="Wealth Terminal v12.0", layout="wide", page_icon="📈")
 
-# --- GLOBAL UI THEME (v13.0) ---
+# Custom CSS
 st.markdown("""
 <style>
-html, body, [class*="css"]  {
-    font-family: 'Inter', sans-serif;
-}
-
-/* Background */
-body {
-    background: radial-gradient(circle at top, #020617, #020617);
-}
-
-/* Glass cards */
-.glass-card {
-    background: rgba(15,23,42,0.85);
-    border-radius: 18px;
-    padding: 18px 20px;
-    border: 1px solid rgba(148,163,184,0.25);
-    backdrop-filter: blur(14px);
-}
-
-/* Neon KPI */
-.neon-kpi {
-    font-size: 30px;
-    font-weight: 700;
-    color: #38bdf8;
-    text-shadow: 0 0 14px rgba(56,189,248,0.9);
-}
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 10px;
-}
-.stTabs [data-baseweb="tab"] {
-    background: rgba(15,23,42,0.9);
-    border-radius: 12px 12px 0 0;
-    padding: 10px 20px;
-    border: 1px solid rgba(51,65,85,0.8);
-    transition: 0.2s ease;
-}
-.stTabs [data-baseweb="tab"]:hover {
-    background: rgba(30,64,175,0.6);
-}
-.stTabs [aria-selected="true"] {
-    background: rgba(56,189,248,0.18);
-    border-bottom: 2px solid #38bdf8;
-    color: #e5e7eb !important;
-}
-
-/* Buttons */
-.stButton>button {
-    background: linear-gradient(135deg, #0ea5e9, #38bdf8);
-    border: none;
-    padding: 0.5rem 1.1rem;
-    border-radius: 999px;
-    color: white;
-    font-weight: 600;
-    font-size: 0.9rem;
-    transition: 0.2s ease;
-}
-.stButton>button:hover {
-    transform: translateY(-1px) scale(1.03);
-    box-shadow: 0 0 18px rgba(56,189,248,0.7);
-}
-
-/* Metric cards */
-.metric-card {
-    background: rgba(15,23,42,0.9);
-    padding: 14px 16px;
-    border-radius: 14px;
-    border: 1px solid rgba(51,65,85,0.9);
-}
-
-/* Dataframe tweaks */
-[data-testid="stDataFrame"] {
-    border-radius: 14px;
-    overflow: hidden;
-}
-
-/* Subtle divider */
-.hr-glow {
-    border: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, #38bdf8, transparent);
-    margin: 0.8rem 0 1.2rem 0;
-}
+.metric-card { background-color: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; }
+.stTabs [data-baseweb="tab-list"] { gap: 10px; }
+.stTabs [data-baseweb="tab"] { background-color: #0f172a; border-radius: 4px 4px 0px 0px; padding: 10px 20px; }
 </style>
 """, unsafe_allow_html=True)
 
-
-# --- 2. SECURITY + SIDEBAR ---
-
+# --- 2. SECURITY ---
 def check_password():
     if "password_correct" not in st.session_state:
-        with st.sidebar:
-            st.markdown("### 🔐 Access")
-            pwd = st.text_input("Access Key", type="password")
-            if st.button("Unlock"):
-                if pwd == st.secrets.get("APP_PASSWORD", "1234"):
-                    st.session_state["password_correct"] = True
-                    st.rerun()
-                else:
-                    st.error("❌ Invalid key")
+        st.sidebar.title("🔐 Access")
+        pwd = st.sidebar.text_input("Access Key", type="password")
+        if st.sidebar.button("Unlock"):
+            if pwd == st.secrets.get("APP_PASSWORD", "1234"):
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.sidebar.error("❌ Invalid")
         return False
     return True
 
 if not check_password():
     st.stop()
-
-with st.sidebar:
-    st.markdown("## 📈 Wealth Terminal")
-    st.caption("v13.0 · Sleek Quant Surface")
-
-    st.markdown("<hr class='hr-glow'>", unsafe_allow_html=True)
-
-    st.markdown("#### Universe Mode")
-    universe_mode = st.radio(
-        "Universe",
-        ["Core Tech Momentum", "Full Base Universe"],
-        label_visibility="collapsed"
-    )
-
-    # you can later branch on universe_mode if you want
-    st.markdown("<hr class='hr-glow'>", unsafe_allow_html=True)
-
-    st.markdown("#### Display Options")
-    show_sentiment_tab = st.checkbox("Show Technical Sentiment", value=True)
-    show_macro_tab = st.checkbox("Show Macro & Fundamentals", value=True)
-
-    st.markdown("<hr class='hr-glow'>", unsafe_allow_html=True)
-    st.caption("Built for 10–30 day swing structures.")
-
 
 # --- 3. BACKEND & DATA ENGINES ---
 @st.cache_data(ttl=3600)
@@ -486,7 +375,7 @@ except Exception as e:
 
 
 # --- 4. USER INTERFACE PLATFORM ---
-
+st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
 
 with st.spinner("Syncing technical historical structures..."):
@@ -495,75 +384,15 @@ with st.spinner("Syncing technical historical structures..."):
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
 
-# --- HERO HEADER ---
-st.markdown("""
-<div class='glass-card' style='margin-bottom:12px;'>
-    <div style='display:flex; justify-content:space-between; align-items:center;'>
-        <div>
-            <div style='font-size:14px; color:#9ca3af;'>Wealth Terminal v13.0</div>
-            <div class='neon-kpi'>Institutional Quant Surface</div>
-            <div style='font-size:13px; color:#64748b; margin-top:4px;'>
-                Momentum · Sentiment · Macro · Fundamentals
-            </div>
-        </div>
-        <div style='text-align:right; font-size:12px; color:#6b7280;'>
-            Session Timezone<br>
-            <span style='color:#e5e7eb;'>Asia / Hong Kong</span>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# --- COMPACT TOP STRIP ---
-st.markdown(f"""
-<div style="
-    width:100%;
-    padding:10px 18px;
-    margin-bottom:14px;
-    border-radius:14px;
-    background:rgba(15,23,42,0.75);
-    backdrop-filter:blur(12px);
-    border:1px solid rgba(148,163,184,0.18);
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    box-shadow:0 0 18px rgba(56,189,248,0.15);
-">
-
-    <!-- LEFT -->
-    <div style="display:flex; gap:22px; align-items:center;">
-        <div style="color:#38bdf8; font-weight:600; font-size:15px;">
-            Terminal: <span style="color:#e2e8f0;">Online</span>
-        </div>
-
-        <div style="color:#38bdf8; font-weight:600; font-size:15px;">
-            Universe: <span style="color:#e2e8f0;">{len(universe)} assets</span>
-        </div>
-
-        <div style="color:#38bdf8; font-weight:600; font-size:15px;">
-            Sync: <span style="color:#e2e8f0;">Live</span>
-        </div>
-    </div>
-
-    <!-- RIGHT -->
-    <div style="text-align:right; color:#94a3b8; font-size:13px;">
-        HK Time<br>
-        <span style="color:#e2e8f0;">{datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%H:%M:%S")}</span>
-    </div>
-
-</div>
-""", unsafe_allow_html=True)
-
-# --- TABS ---
 tab_momentum, tab_sentiment, tab_macro = st.tabs([
-    " Momentum",
-    " Technical Sentiment",
-    " Macro & Long-Term"
+    "⚡ Short-Term Momentum",
+    "🔮 Technical Sentiment",
+    "🏛️ Macro Wealth & Long-Term Investment"
 ])
 
 # TAB 1
 with tab_momentum:
-    st.markdown("## <span style='color:#38bdf8;'> Short‑Term Momentum Scanner</span>", unsafe_allow_html=True)
+    st.subheader("Explosive Short-Term Breakout Scanner")
     if not historical_data.empty:
         momentum_df = calculate_momentum_metrics(historical_data, universe)
         if not momentum_df.empty:
@@ -575,7 +404,7 @@ with tab_momentum:
 
 # TAB 2: TECHNICAL SENTIMENT
 with tab_sentiment:
-    st.markdown("## <span style='color:#f472b6;'> Technical Sentiment Engine</span>", unsafe_allow_html=True)
+    st.subheader("Dynamic Fear & Greed Structural Proxies")
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
 
     if not historical_data.empty:
@@ -749,7 +578,7 @@ with tab_sentiment:
 
 # TAB 3
 with tab_macro:
-    st.markdown("## <span style='color:#a78bfa;'>🏛️ Macro Wealth Framework</span>", unsafe_allow_html=True)
+    st.subheader("Institutional Macro Structural & Fundamental Scanner")
     st.markdown("This module cross-references technical moving averages with corporate value parameters.")
 
     if not historical_data.empty:
@@ -782,8 +611,7 @@ with tab_macro:
 
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
-            st.markdown("## <span style='color:#a78bfa;'> Macro Wealth Framework</span>", unsafe_allow_html=True)
-
+            st.subheader("Macro Trend Construction Visualization")
             viz_ticker = st.selectbox(
                 "Select Asset for Multi-Month Visual Inspection:",
                 filtered_df["Ticker"].tolist() if not filtered_df.empty else universe
