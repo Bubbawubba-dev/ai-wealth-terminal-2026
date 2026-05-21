@@ -722,7 +722,8 @@ with tab_macro:
 
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
-            st.subheader("Macro Trend Construction Visualization")
+            st.markdown("## <span style='color:#a78bfa;'> Macro Wealth Framework</span>", unsafe_allow_html=True)
+
             viz_ticker = st.selectbox(
                 "Select Asset for Multi-Month Visual Inspection:",
                 filtered_df["Ticker"].tolist() if not filtered_df.empty else universe
