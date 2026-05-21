@@ -103,22 +103,48 @@ body {
 """, unsafe_allow_html=True)
 
 
-# --- 2. SECURITY ---
+# --- 2. SECURITY + SIDEBAR ---
+
 def check_password():
     if "password_correct" not in st.session_state:
-        st.sidebar.title("🔐 Access")
-        pwd = st.sidebar.text_input("Access Key", type="password")
-        if st.sidebar.button("Unlock"):
-            if pwd == st.secrets.get("APP_PASSWORD", "1234"):
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.sidebar.error("❌ Invalid")
+        with st.sidebar:
+            st.markdown("### 🔐 Access")
+            pwd = st.text_input("Access Key", type="password")
+            if st.button("Unlock"):
+                if pwd == st.secrets.get("APP_PASSWORD", "1234"):
+                    st.session_state["password_correct"] = True
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid key")
         return False
     return True
 
 if not check_password():
     st.stop()
+
+with st.sidebar:
+    st.markdown("## 📈 Wealth Terminal")
+    st.caption("v13.0 · Sleek Quant Surface")
+
+    st.markdown("<hr class='hr-glow'>", unsafe_allow_html=True)
+
+    st.markdown("#### Universe Mode")
+    universe_mode = st.radio(
+        "Universe",
+        ["Core Tech Momentum", "Full Base Universe"],
+        label_visibility="collapsed"
+    )
+
+    # you can later branch on universe_mode if you want
+    st.markdown("<hr class='hr-glow'>", unsafe_allow_html=True)
+
+    st.markdown("#### Display Options")
+    show_sentiment_tab = st.checkbox("Show Technical Sentiment", value=True)
+    show_macro_tab = st.checkbox("Show Macro & Fundamentals", value=True)
+
+    st.markdown("<hr class='hr-glow'>", unsafe_allow_html=True)
+    st.caption("Built for 10–30 day swing structures.")
+
 
 # --- 3. BACKEND & DATA ENGINES ---
 @st.cache_data(ttl=3600)
