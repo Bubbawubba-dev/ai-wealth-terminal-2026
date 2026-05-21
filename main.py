@@ -486,7 +486,7 @@ except Exception as e:
 
 
 # --- 4. USER INTERFACE PLATFORM ---
-st.title("📈 Wealth Terminal v12.0")
+
 universe = get_base_universe()
 
 with st.spinner("Syncing technical historical structures..."):
@@ -495,10 +495,70 @@ with st.spinner("Syncing technical historical structures..."):
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
 
+# --- HERO HEADER ---
+st.markdown("""
+<div class='glass-card' style='margin-bottom:12px;'>
+    <div style='display:flex; justify-content:space-between; align-items:center;'>
+        <div>
+            <div style='font-size:14px; color:#9ca3af;'>Wealth Terminal v13.0</div>
+            <div class='neon-kpi'>Institutional Quant Surface</div>
+            <div style='font-size:13px; color:#64748b; margin-top:4px;'>
+                Momentum · Sentiment · Macro · Fundamentals
+            </div>
+        </div>
+        <div style='text-align:right; font-size:12px; color:#6b7280;'>
+            Session Timezone<br>
+            <span style='color:#e5e7eb;'>Asia / Hong Kong</span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# --- COMPACT TOP STRIP ---
+st.markdown(f"""
+<div style="
+    width:100%;
+    padding:10px 18px;
+    margin-bottom:14px;
+    border-radius:14px;
+    background:rgba(15,23,42,0.75);
+    backdrop-filter:blur(12px);
+    border:1px solid rgba(148,163,184,0.18);
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    box-shadow:0 0 18px rgba(56,189,248,0.15);
+">
+
+    <!-- LEFT -->
+    <div style="display:flex; gap:22px; align-items:center;">
+        <div style="color:#38bdf8; font-weight:600; font-size:15px;">
+            Terminal: <span style="color:#e2e8f0;">Online</span>
+        </div>
+
+        <div style="color:#38bdf8; font-weight:600; font-size:15px;">
+            Universe: <span style="color:#e2e8f0;">{len(universe)} assets</span>
+        </div>
+
+        <div style="color:#38bdf8; font-weight:600; font-size:15px;">
+            Sync: <span style="color:#e2e8f0;">Live</span>
+        </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div style="text-align:right; color:#94a3b8; font-size:13px;">
+        HK Time<br>
+        <span style="color:#e2e8f0;">{datetime.now(ZoneInfo("Asia/Hong_Kong")).strftime("%H:%M:%S")}</span>
+    </div>
+
+</div>
+""", unsafe_allow_html=True)
+
+# --- TABS ---
 tab_momentum, tab_sentiment, tab_macro = st.tabs([
-    "⚡ Short-Term Momentum",
-    "🔮 Technical Sentiment",
-    "🏛️ Macro Wealth & Long-Term Investment"
+    " Momentum",
+    " Technical Sentiment",
+    " Macro & Long-Term"
 ])
 
 # TAB 1
