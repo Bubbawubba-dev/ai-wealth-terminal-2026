@@ -466,12 +466,13 @@ with tab_sentiment:
             vol_ratio_series = atr5 / atr20
 
             # --- PREMIUM TREND RIBBON ENGINE (LUXALGO STYLE) ---
-# Zone classification + Reversal Zones
-if score_0_100 >= 75:
-    # Strong bull, but check for exhaustion
-    if rsi_val < 55:
-        zone = "Bullish Reversal"
-        color = "rgba(250, 204, 21, 0.22)"   # gold
+
+            # Zone classification + Reversal Zones
+            if score_0_100 >= 75:
+                # Strong bull, but check for exhaustion
+                if rsi_val < 55:
+                    zone = "Bullish Reversal"
+                    color = "rgba(250, 204, 21, 0.22)"   # gold
     else:
         zone = "Strong Bull"
         color = "rgba(34, 197, 94, 0.18)"    # bright green
