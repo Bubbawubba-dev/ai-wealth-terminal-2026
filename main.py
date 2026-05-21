@@ -433,7 +433,7 @@ with tab_sentiment:
                     "steps": [
                         {"range": [0, 25], "color": "#1e3a8a"},
                         {"range": [25, 45], "color": "#0f766e"},
-                        {"range": [45, 
+                        {"range": [45], 
 # TAB 3
 with tab_macro:
     st.subheader("Institutional Macro Structural & Fundamental Scanner")
