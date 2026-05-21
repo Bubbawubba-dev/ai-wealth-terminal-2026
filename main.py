@@ -535,6 +535,29 @@ with tab_sentiment:
         else:
             st.error(f"Engine Fault: {sentiment['error']}")
 
+# --- SENTIMENT GAUGE ---
+import plotly.graph_objects as go
+
+gauge_fig = go.Figure(go.Indicator(
+    mode="gauge+number",
+    value=sentiment["score"],
+    title={"text": "Sentiment Gauge (0–100)"},
+    gauge={
+        "axis": {"range": [0, 100]},
+        "bar": {"color": "#38bdf8"},
+        "steps": [
+            {"range": [0, 25], "color": "#1e3a8a"},
+            {"range": [25, 45], "color": "#0f766e"},
+            {"range": [45, 55], "color": "#475569"},
+            {"range": [55, 75], "color": "#ca8a04"},
+            {"range": [75, 100], "color": "#b91c1c"},
+        ],
+    }
+))
+
+st.plotly_chart(gauge_fig, use_container_width=True)
+
+
 # TAB 3
 with tab_macro:
     st.subheader("Institutional Macro Structural & Fundamental Scanner")
