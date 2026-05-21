@@ -466,9 +466,37 @@ with tab_sentiment:
             vol_ratio_series = atr5 / atr20
 
             # --- PREMIUM TREND RIBBON ENGINE (LUXALGO STYLE) ---
-            trend_scores = []      # 0–100
-            trend_zones = []       # labels
-            trend_colors = []      # rgba colors
+# Zone classification + Reversal Zones
+if score_0_100 >= 75:
+    # Strong bull, but check for exhaustion
+    if rsi_val < 55:
+        zone = "Bullish Reversal"
+        color = "rgba(250, 204, 21, 0.22)"   # gold
+    else:
+        zone = "Strong Bull"
+        color = "rgba(34, 197, 94, 0.18)"    # bright green
+
+elif score_0_100 >= 60:
+    zone = "Bull"
+    color = "rgba(74, 222, 128, 0.14)"       # soft green
+
+elif score_0_100 >= 40:
+    zone = "Neutral"
+    color = "rgba(148, 163, 184, 0.10)"      # slate
+
+elif score_0_100 >= 25:
+    zone = "Bear"
+    color = "rgba(248, 113, 113, 0.14)"      # soft red
+
+else:
+    # Strong bear, but check for exhaustion
+    if rsi_val > 45:
+        zone = "Bearish Reversal"
+        color = "rgba(251, 146, 60, 0.22)"   # orange
+    else:
+        zone = "Strong Bear"
+        color = "rgba(239, 68, 68, 0.20)"    # deep red
+
 
             # helper to clamp
             def clamp(x, lo, hi):
