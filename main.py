@@ -286,94 +286,6 @@ def calculate_macro_trends(df_history, tickers, fundamental_data):
 
     return pd.DataFrame(macro_data)
 
-# --- SENTIMENT VISUALIZATION ENGINE ---
-st.markdown("### Sentiment Structure Visualization")
-
-try:
-    ticker_df = historical_data[selected_ticker].dropna()
-    close = ticker_df["Close"]
-    high = ticker_df["High"]
-    low = ticker_df["Low"]
-
-    # --- RSI 14 ---
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    rsi_series = 100 - (100 / (1 + rs))
-
-    fig_rsi = go.Figure()
-    fig_rsi.add_trace(go.Scatter(
-        x=rsi_series.index,
-        y=rsi_series,
-        mode="lines",
-        name="RSI 14",
-        line=dict(color="#38bdf8", width=2)
-    ))
-    fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
-    fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-    fig_rsi.update_layout(
-        title=f"{selected_ticker} — RSI (14)",
-        template="plotly_dark",
-        height=250,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
-    # --- PRICE vs SMA20 ---
-    sma20 = close.rolling(20).mean()
-
-    fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(
-        x=close.index,
-        y=close,
-        name="Close",
-        line=dict(color="#38bdf8", width=2)
-    ))
-    fig_price.add_trace(go.Scatter(
-        x=sma20.index,
-        y=sma20,
-        name="SMA20",
-        line=dict(color="#f59e0b", dash="dash")
-    ))
-    fig_price.update_layout(
-        title=f"{selected_ticker} — Price vs SMA20",
-        template="plotly_dark",
-        height=300,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
-    # --- VOLATILITY RATIO MINI-CHART ---
-    tr = np.maximum(
-        (high - low),
-        np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
-    )
-    atr5 = tr.rolling(5).mean()
-    atr20 = tr.rolling(20).mean()
-    vol_ratio_series = atr5 / atr20
-
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(
-        x=vol_ratio_series.index,
-        y=vol_ratio_series,
-        name="ATR5 / ATR20",
-        line=dict(color="#ef4444", width=2)
-    ))
-    fig_vol.update_layout(
-        title=f"{selected_ticker} — Volatility Ratio",
-        template="plotly_dark",
-        height=250,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
-    # --- DISPLAY ---
-    st.plotly_chart(fig_price, use_container_width=True)
-    st.plotly_chart(fig_rsi, use_container_width=True)
-    st.plotly_chart(fig_vol, use_container_width=True)
-
-except Exception as e:
-    st.error(f"Visualization Engine Fault: {e}")
-
-
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
@@ -402,7 +314,7 @@ with tab_momentum:
     else:
         st.error("Failed to load short-term historical metrics.")
 
-# TAB 2: TECHNICAL SENTIMENT
+# TAB 2: TECHNICAL SENTIMENT (PREMIUM RIBBON ENGINE + REVERSALS)
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
@@ -413,7 +325,6 @@ with tab_sentiment:
 
         if sentiment["status"] == "Active":
 
-            # --- METRICS ROW ---
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
@@ -422,7 +333,6 @@ with tab_sentiment:
             with col3:
                 st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
 
-            # --- SENTIMENT GAUGE ---
             gauge_fig = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=sentiment["score"],
@@ -441,32 +351,103 @@ with tab_sentiment:
             ))
             st.plotly_chart(gauge_fig, use_container_width=True)
 
-            # --- LOAD PRICE DATA ---
             ticker_df = historical_data[selected_ticker].dropna()
             close = ticker_df["Close"]
             high = ticker_df["High"]
             low = ticker_df["Low"]
 
-            # --- CALCULATE RSI ---
             delta = close.diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             rs = gain / loss
             rsi_series = 100 - (100 / (1 + rs))
 
-            # --- SMA20 ---
             sma20 = close.rolling(20).mean()
 
-            # --- VOLATILITY RATIO ---
-            tr = np.maximum((high - low),
-                            np.maximum(abs(high - close.shift(1)),
-                                       abs(low - close.shift(1))))
+            tr = np.maximum(
+                (high - low),
+                np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+            )
             atr5 = tr.rolling(5).mean()
             atr20 = tr.rolling(20).mean()
             vol_ratio_series = atr5 / atr20
 
-            # --- PRICE CHART WITH SIGNAL ARROWS ---
+            trend_scores = []
+            trend_zones = []
+            trend_colors = []
+
+            def clamp(x, lo, hi):
+                return max(lo, min(hi, x))
+
+            for i in range(len(close)):
+                if i < 20:
+                    trend_scores.append(50)
+                    trend_zones.append("Neutral")
+                    trend_colors.append("rgba(148, 163, 184, 0.10)")
+                    continue
+
+                price = close.iloc[i]
+                ma = sma20.iloc[i]
+                rsi_val = rsi_series.iloc[i]
+                vol_val = vol_ratio_series.iloc[i]
+
+                if pd.isna(ma) or ma == 0:
+                    trend_component = 0
+                else:
+                    dist_pct = (price - ma) / ma * 100
+                    trend_component = clamp(dist_pct / 5.0, -1.5, 1.5)
+
+                rsi_component = clamp((rsi_val - 50) / 15.0, -1.5, 1.5)
+                vol_component = clamp((vol_val - 1.0) / 0.5, -1.5, 1.5)
+
+                raw_score = (
+                    0.45 * trend_component +
+                    0.35 * rsi_component +
+                    0.20 * vol_component
+                )
+
+                score_0_100 = clamp((raw_score + 1.5) / 3.0 * 100, 0, 100)
+                trend_scores.append(score_0_100)
+
+                if score_0_100 >= 75:
+                    if rsi_val < 55:
+                        zone = "Bullish Reversal"
+                        color = "rgba(250, 204, 21, 0.22)"
+                    else:
+                        zone = "Strong Bull"
+                        color = "rgba(34, 197, 94, 0.18)"
+                elif score_0_100 >= 60:
+                    zone = "Bull"
+                    color = "rgba(74, 222, 128, 0.14)"
+                elif score_0_100 >= 40:
+                    zone = "Neutral"
+                    color = "rgba(148, 163, 184, 0.10)"
+                elif score_0_100 >= 25:
+                    zone = "Bear"
+                    color = "rgba(248, 113, 113, 0.14)"
+                else:
+                    if rsi_val > 45:
+                        zone = "Bearish Reversal"
+                        color = "rgba(251, 146, 60, 0.22)"
+                    else:
+                        zone = "Strong Bear"
+                        color = "rgba(239, 68, 68, 0.20)"
+
+                trend_zones.append(zone)
+                trend_colors.append(color)
+
             fig_price = go.Figure()
+
+            for i in range(1, len(close)):
+                fig_price.add_vrect(
+                    x0=close.index[i-1],
+                    x1=close.index[i],
+                    fillcolor=trend_colors[i],
+                    opacity=1.0,
+                    line_width=0,
+                    layer="below"
+                )
+
             fig_price.add_trace(go.Scatter(
                 x=close.index, y=close,
                 name="Close", line=dict(color="#38bdf8", width=2)
@@ -476,50 +457,67 @@ with tab_sentiment:
                 name="SMA20", line=dict(color="#f59e0b", dash="dash")
             ))
 
-            # --- SIGNAL ARROWS ---
             buy_signals = []
             sell_signals = []
 
             for i in range(1, len(close)):
-                # BUY
+                price = close.iloc[i]
+                prev_price = close.iloc[i-1]
+                ma = sma20.iloc[i]
+                prev_ma = sma20.iloc[i-1]
+                rsi_val = rsi_series.iloc[i]
+                vol_val = vol_ratio_series.iloc[i]
+                score_val = trend_scores[i]
+
+                is_cross_up = price > ma and prev_price <= prev_ma
+                is_cross_down = price < ma and prev_price >= prev_ma
+
+                is_momentum_strong = rsi_val > 55
+                is_momentum_weak = rsi_val < 45
+                is_vol_expanding = vol_val > 1.0
+                is_vol_contracting = vol_val < 0.8
+
                 if (
-                    close.iloc[i] > sma20.iloc[i] and
-                    close.iloc[i-1] <= sma20.iloc[i-1] and
-                    rsi_series.iloc[i] > 50 and
-                    vol_ratio_series.iloc[i] > 1.0
+                    is_cross_up and
+                    is_momentum_strong and
+                    is_vol_expanding and
+                    score_val >= 60
                 ):
-                    buy_signals.append((close.index[i], close.iloc[i]))
+                    buy_signals.append((close.index[i], price))
 
-                # SELL
                 if (
-                    close.iloc[i] < sma20.iloc[i] and
-                    close.iloc[i-1] >= sma20.iloc[i-1] or
-                    rsi_series.iloc[i] < 45
+                    is_cross_down or
+                    is_momentum_weak or
+                    is_vol_contracting or
+                    score_val <= 40
                 ):
-                    sell_signals.append((close.index[i], close.iloc[i]))
+                    sell_signals.append((close.index[i], price))
 
-            # Plot arrows
-            for t, p in buy_signals:
-                fig_price.add_annotation(
-                    x=t, y=p, text="⬆ BUY",
-                    showarrow=True, arrowhead=1,
-                    font=dict(color="#22c55e")
-                )
+            if buy_signals:
+                fig_price.add_trace(go.Scatter(
+                    x=[t for t, p in buy_signals],
+                    y=[p for t, p in buy_signals],
+                    mode="markers",
+                    marker=dict(symbol="triangle-up", size=12, color="#22c55e"),
+                    name="BUY"
+                ))
 
-            for t, p in sell_signals:
-                fig_price.add_annotation(
-                    x=t, y=p, text="⬇ SELL",
-                    showarrow=True, arrowhead=1,
-                    font=dict(color="#ef4444")
-                )
+            if sell_signals:
+                fig_price.add_trace(go.Scatter(
+                    x=[t for t, p in sell_signals],
+                    y=[p for t, p in sell_signals],
+                    mode="markers",
+                    marker=dict(symbol="triangle-down", size=12, color="#ef4444"),
+                    name="SELL"
+                ))
 
             fig_price.update_layout(
-                title=f"{selected_ticker} — Price with Signals",
-                template="plotly_dark", height=300
+                title=f"{selected_ticker} — Premium Trend Ribbon & Signals",
+                template="plotly_dark",
+                height=360
             )
             st.plotly_chart(fig_price, use_container_width=True)
 
-            # --- BACKTEST ENGINE ---
             st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
             returns = []
@@ -527,30 +525,34 @@ with tab_sentiment:
             entry_price = None
 
             for i in range(1, len(close)):
+                price = close.iloc[i]
+                ma = sma20.iloc[i]
+                rsi_val = rsi_series.iloc[i]
+                vol_val = vol_ratio_series.iloc[i]
+                score_val = trend_scores[i]
 
-                # ENTRY
                 if (
                     position is None and
-                    close.iloc[i] > sma20.iloc[i] and
-                    rsi_series.iloc[i] > 50 and
-                    vol_ratio_series.iloc[i] > 1.0
+                    price > ma and
+                    rsi_val > 55 and
+                    vol_val > 1.0 and
+                    score_val >= 60
                 ):
                     position = "LONG"
-                    entry_price = close.iloc[i]
+                    entry_price = price
 
-                # EXIT
                 elif (
                     position == "LONG" and (
-                        close.iloc[i] < sma20.iloc[i] or
-                        rsi_series.iloc[i] < 45 or
-                        vol_ratio_series.iloc[i] < 0.8
+                        price < ma or
+                        rsi_val < 45 or
+                        vol_val < 0.8 or
+                        score_val <= 40
                     )
                 ):
-                    returns.append((close.iloc[i] - entry_price) / entry_price)
+                    returns.append((price - entry_price) / entry_price)
                     position = None
                     entry_price = None
 
-            # Summary
             if returns:
                 avg_return = np.mean(returns) * 100
                 win_rate = (np.sum(np.array(returns) > 0) / len(returns)) * 100
@@ -560,21 +562,24 @@ with tab_sentiment:
             else:
                 st.info("Not enough signals to compute backtest.")
 
-            # --- PROBABILITY MODEL ---
             st.markdown("### 🔮 Trend Continuation Probability")
 
             prob = (
-                0.4 * (sentiment["metrics"]["rsi_14"] / 100) +
-                0.4 * (max(0, sentiment["metrics"]["ma_deviation_pct"]) / 20) +
-                0.2 * min(1.5, sentiment["metrics"]["volatility_ratio"]) / 1.5
+                0.45 * (sentiment["metrics"]["rsi_14"] / 100) +
+                0.35 * (max(0, sentiment["metrics"]["ma_deviation_pct"]) / 20) +
+                0.20 * min(1.5, sentiment["metrics"]["volatility_ratio"]) / 1.5
             )
 
             probability = min(100, max(0, prob * 100))
+            latest_trend_score = trend_scores[-1] if trend_scores else 50
+            blended_prob = 0.6 * probability + 0.4 * latest_trend_score
 
-            st.metric("Continuation Probability", f"{probability:.1f}%")
+            st.metric("Continuation Probability", f"{blended_prob:.1f}%")
 
         else:
             st.error(f"Engine Fault: {sentiment['error']}")
+    else:
+        st.error("Engine Fault: Historical data unavailable.")
 
 # TAB 3
 with tab_macro:
@@ -640,7 +645,6 @@ with tab_macro:
                     st.caption(f"No pricing structures found for {viz_ticker}")
             except Exception as e:
                 st.caption(f"Could not build visualization for {viz_ticker}: {e}")
-
         else:
             st.warning("Insufficient structural pricing matrix for 200-day horizons.")
     else:
