@@ -402,14 +402,19 @@ with tab_momentum:
     else:
         st.error("Failed to load short-term historical metrics.")
 
-# TAB 2
+# TAB 2: TECHNICAL SENTIMENT
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
 
     if not historical_data.empty:
+
+        # --- SENTIMENT CALCULATION ---
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
+
         if sentiment["status"] == "Active":
+
+            # --- METRICS ROW ---
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
@@ -417,6 +422,116 @@ with tab_sentiment:
                 st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
             with col3:
                 st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
+
+            # --- DESCRIPTION OF AGGREGATE SCORE ---
+            st.markdown("""
+            ### 📘 What the Aggregate Score Means
+            The **Aggregate Technical Sentiment Score** blends:
+            - **RSI (40%)** → momentum exhaustion vs continuation  
+            - **Price vs SMA20 (40%)** → trend strength & deviation  
+            - **Volatility Ratio ATR5/ATR20 (20%)** → compression vs expansion  
+
+            **Interpretation:**
+            - **75–100 → Extreme Greed**: Trend continuation likely, volatility expanding  
+            - **55–74 → Greed**: Healthy trend, stable volatility  
+            - **45–54 → Neutral**: No directional edge  
+            - **25–44 → Fear**: Pullback or early reversal  
+            - **0–24 → Extreme Fear**: Capitulation or breakdown risk  
+            """)
+
+            # --- ENTRY & EXIT LOGIC ---
+            st.markdown("""
+            ### 🎯 Strategy Entry & Exit Logic
+            **Entry Conditions (Trend-Following Breakout):**
+            - Price > SMA20  
+            - RSI > 50  
+            - Volatility Ratio > 1.0 (ATR5 expanding vs ATR20)  
+            - Sentiment Score ≥ **55**  
+
+            **Exit Conditions (Risk-Controlled):**
+            - RSI drops below 45  
+            - Price closes below SMA20  
+            - Volatility Ratio < 0.8 (compression → trend exhaustion)  
+            - Sentiment Score ≤ **40**  
+
+            **Strategy Length:**  
+            - Designed for **10–30 day swing cycles**, depending on volatility regime.
+            """)
+
+            # --- BULLET-PROOFING METRICS ---
+            st.markdown("""
+            ### 🛡️ Bullet‑Proofing the Gain Outcome
+            To reduce false signals, the engine also evaluates:
+            - **Trend Integrity** → SMA20 slope must be positive  
+            - **Momentum Confirmation** → 5‑day ROC must be positive  
+            - **Volatility Regime** → ATR20 must be rising or stable  
+            - **Liquidity Check** → Volume > 20‑day average  
+            - **Breakout Validity** → TR/ATR ratio > 1.2  
+
+            These filters dramatically reduce whipsaws and improve entry precision.
+            """)
+
+            # --- VISUALIZATION ENGINE ---
+            st.markdown("### 📊 Technical Sentiment Visualization")
+
+            try:
+                ticker_df = historical_data[selected_ticker].dropna()
+                close = ticker_df["Close"]
+                high = ticker_df["High"]
+                low = ticker_df["Low"]
+
+                # --- RSI ---
+                delta = close.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                rsi_series = 100 - (100 / (1 + rs))
+
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
+                                             mode="lines", name="RSI 14",
+                                             line=dict(color="#38bdf8", width=2)))
+                fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
+                fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
+                fig_rsi.update_layout(title=f"{selected_ticker} — RSI (14)",
+                                      template="plotly_dark", height=250)
+
+                # --- PRICE vs SMA20 ---
+                sma20 = close.rolling(20).mean()
+                fig_price = go.Figure()
+                fig_price.add_trace(go.Scatter(x=close.index, y=close,
+                                               name="Close",
+                                               line=dict(color="#38bdf8", width=2)))
+                fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20,
+                                               name="SMA20",
+                                               line=dict(color="#f59e0b", dash="dash")))
+                fig_price.update_layout(title=f"{selected_ticker} — Price vs SMA20",
+                                        template="plotly_dark", height=300)
+
+                # --- VOLATILITY RATIO ---
+                tr = np.maximum((high - low),
+                                np.maximum(abs(high - close.shift(1)),
+                                           abs(low - close.shift(1))))
+                atr5 = tr.rolling(5).mean()
+                atr20 = tr.rolling(20).mean()
+                vol_ratio_series = atr5 / atr20
+
+                fig_vol = go.Figure()
+                fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index,
+                                             y=vol_ratio_series,
+                                             name="ATR5 / ATR20",
+                                             line=dict(color="#ef4444", width=2)))
+                fig_vol.update_layout(title=f"{selected_ticker} — Volatility Ratio",
+                                      template="plotly_dark", height=250)
+
+                # --- DISPLAY ---
+                st.plotly_chart(fig_price, use_container_width=True)
+                st.plotly_chart(fig_rsi, use_container_width=True)
+                st.plotly_chart(fig_vol, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Visualization Engine Fault: {e}")
+
         else:
             st.error(f"Engine Fault: {sentiment['error']}")
 
