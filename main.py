@@ -412,7 +412,7 @@ with tab_sentiment:
         # --- SENTIMENT CALCULATION ---
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
-        if sentiment["status"] == "Active":
+    if sentiment["status"] == "Active":
 
            # --- SENTIMENT GAUGE ---
 gauge_fig = go.Figure(go.Indicator(
