@@ -39,9 +39,9 @@ if not check_password():
 @st.cache_data(ttl=3600)
 def get_base_universe():
     """Returns a stable, responsive base core universe of volatile/momentum equities."""
-    return ["MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
-            "RKLB", "SNDK", "CYBR", "INTC", "F", "PLTR", "SOUN", "BBAI", "NOW", "CIFR", 
-            "AVGO", "MU", "STX", "LITE"]
+    return ["MRAM", "ASTS", "ANET", "QBTS", "TSLA", "GOOGL", "FLEX", "VCYT", "MSFT", "NVDA",
+            "RKLB", "SNDK", "CYBR", "INTC", "F", "PLTR", "SOUN", "BBAI", "NOW", "AMD", 
+            "SMCI", "MU", "STX", "LITE"]
 
 @st.cache_data(ttl=1800)
 def fetch_historical_data(tickers, days=180):
