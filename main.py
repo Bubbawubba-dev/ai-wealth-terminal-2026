@@ -477,26 +477,26 @@ with tab_sentiment:
         zone = "Strong Bull"
         color = "rgba(34, 197, 94, 0.18)"    # bright green
 
-elif score_0_100 >= 60:
-    zone = "Bull"
-    color = "rgba(74, 222, 128, 0.14)"       # soft green
+    elif score_0_100 >= 60:
+        zone = "Bull"
+        color = "rgba(74, 222, 128, 0.14)"       # soft green
 
-elif score_0_100 >= 40:
-    zone = "Neutral"
-    color = "rgba(148, 163, 184, 0.10)"      # slate
+    elif score_0_100 >= 40:
+        zone = "Neutral"
+        color = "rgba(148, 163, 184, 0.10)"      # slate
 
-elif score_0_100 >= 25:
-    zone = "Bear"
-    color = "rgba(248, 113, 113, 0.14)"      # soft red
+    elif score_0_100 >= 25:
+        zone = "Bear"
+        color = "rgba(248, 113, 113, 0.14)"      # soft red
 
-else:
-    # Strong bear, but check for exhaustion
-    if rsi_val > 45:
-        zone = "Bearish Reversal"
-        color = "rgba(251, 146, 60, 0.22)"   # orange
     else:
-        zone = "Strong Bear"
-        color = "rgba(239, 68, 68, 0.20)"    # deep red
+        # Strong bear, but check for exhaustion
+        if rsi_val > 45:
+            zone = "Bearish Reversal"
+            color = "rgba(251, 146, 60, 0.22)"   # orange
+        else:
+            zone = "Strong Bear"
+            color = "rgba(239, 68, 68, 0.20)"    # deep red
 
 
             # helper to clamp
