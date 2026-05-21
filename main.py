@@ -503,7 +503,7 @@ tab_momentum, tab_sentiment, tab_macro = st.tabs([
 
 # TAB 1
 with tab_momentum:
-    st.subheader("Explosive Short-Term Breakout Scanner")
+    st.markdown("## <span style='color:#38bdf8;'>⚡ Short‑Term Momentum Scanner</span>", unsafe_allow_html=True)
     if not historical_data.empty:
         momentum_df = calculate_momentum_metrics(historical_data, universe)
         if not momentum_df.empty:
