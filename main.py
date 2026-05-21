@@ -368,61 +368,6 @@ def backtest_swing_strategy(df_history, ticker):
 
     except Exception:
         return None
-        
-    # --- PRICE vs SMA20 ---
-    sma20 = close.rolling(20).mean()
-
-    fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(
-        x=close.index,
-        y=close,
-        name="Close",
-        line=dict(color="#38bdf8", width=2)
-    ))
-    fig_price.add_trace(go.Scatter(
-        x=sma20.index,
-        y=sma20,
-        name="SMA20",
-        line=dict(color="#f59e0b", dash="dash")
-    ))
-    fig_price.update_layout(
-        title=f"{selected_ticker} — Price vs SMA20",
-        template="plotly_dark",
-        height=300,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
-    # --- VOLATILITY RATIO MINI-CHART ---
-    tr = np.maximum(
-        (high - low),
-        np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
-    )
-    atr5 = tr.rolling(5).mean()
-    atr20 = tr.rolling(20).mean()
-    vol_ratio_series = atr5 / atr20
-
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(
-        x=vol_ratio_series.index,
-        y=vol_ratio_series,
-        name="ATR5 / ATR20",
-        line=dict(color="#ef4444", width=2)
-    ))
-    fig_vol.update_layout(
-        title=f"{selected_ticker} — Volatility Ratio",
-        template="plotly_dark",
-        height=250,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
-    # --- DISPLAY ---
-    st.plotly_chart(fig_price, use_container_width=True)
-    st.plotly_chart(fig_rsi, use_container_width=True)
-    st.plotly_chart(fig_vol, use_container_width=True)
-
-except Exception as e:
-    st.error(f"Visualization Engine Fault: {e}")
-
 
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
