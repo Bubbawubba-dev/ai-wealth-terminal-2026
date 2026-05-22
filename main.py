@@ -486,18 +486,18 @@ try:
 except Exception as e:
     st.error(f"Visualization Engine Fault: {e}")
 
-            # --- BACKTEST ENGINE ---
-            st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
+    # --- BACKTEST ENGINE ---
+    st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
-            returns = []
-            position = None
-            entry_price = None
+    returns = []
+    position = None
+    entry_price = None
 
-            for i in range(1, len(close)):
+    for i in range(1, len(close)):
 
-                # ENTRY
-                if (
-                    position is None and
+    # ENTRY
+    if (
+    position is None and
                     close.iloc[i] > sma20.iloc[i] and
                     rsi_series.iloc[i] > 50 and
                     vol_ratio_series.iloc[i] > 1.0
