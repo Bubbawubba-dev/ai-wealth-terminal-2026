@@ -40,7 +40,7 @@ if not check_password():
 def get_base_universe():
     return [
         "MRAM", "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", 
-        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "QUBT", "QBTS"
+        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "QUBT", "QBTS",
         "AVGO", "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS"
     ]
 
