@@ -41,7 +41,7 @@ def get_base_universe():
     return [
         "MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
         "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
-        "AVGO", "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS", 
+        "AVGO", "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS"
     ]
 
 @st.cache_data(ttl=1800)
@@ -409,7 +409,6 @@ with tab_sentiment:
 
     if not historical_data.empty:
 
-        # --- SENTIMENT CALCULATION ---
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
         if sentiment["status"] == "Active":
@@ -423,140 +422,159 @@ with tab_sentiment:
             with col3:
                 st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
 
-            # --- DESCRIPTION OF AGGREGATE SCORE ---
-            st.markdown("""
-            ### 📘 What the Aggregate Score Means
-            The **Aggregate Technical Sentiment Score** blends:
-            - **RSI (40%)** → momentum exhaustion vs continuation  
-            - **Price vs SMA20 (40%)** → trend strength & deviation  
-            - **Volatility Ratio ATR5/ATR20 (20%)** → compression vs expansion  
+            # --- SENTIMENT GAUGE ---
+            gauge_fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=sentiment["score"],
+                title={"text": "Sentiment Gauge (0–100)"},
+                gauge={
+                    "axis": {"range": [0, 100]},
+                    "bar": {"color": "#38bdf8"},
+                    "steps": [
+                        {"range": [0, 25], "color": "#1e3a8a"},
+                        {"range": [25, 45], "color": "#0f766e"},
+                        {"range": [45, 55], "color": "#475569"},
+                        {"range": [55, 75], "color": "#ca8a04"},
+                        {"range": [75, 100], "color": "#b91c1c"},
+                    ],
+                }
+            ))
+            st.plotly_chart(gauge_fig, use_container_width=True)
 
-            **Interpretation:**
-            - **75–100 → Extreme Greed**: Trend continuation likely, volatility expanding  
-            - **55–74 → Greed**: Healthy trend, stable volatility  
-            - **45–54 → Neutral**: No directional edge  
-            - **25–44 → Fear**: Pullback or early reversal  
-            - **0–24 → Extreme Fear**: Capitulation or breakdown risk  
-            """)
+            # --- LOAD PRICE DATA ---
+            ticker_df = historical_data[selected_ticker].dropna()
+            close = ticker_df["Close"]
+            high = ticker_df["High"]
+            low = ticker_df["Low"]
 
-            # --- ENTRY & EXIT LOGIC ---
-            st.markdown("""
-            ### 🎯 Strategy Entry & Exit Logic
-            **Entry Conditions (Trend-Following Breakout):**
-            - Price > SMA20  
-            - RSI > 50  
-            - Volatility Ratio > 1.0 (ATR5 expanding vs ATR20)  
-            - Sentiment Score ≥ **55**  
+            # --- CALCULATE RSI ---
+            delta = close.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi_series = 100 - (100 / (1 + rs))
 
-            **Exit Conditions (Risk-Controlled):**
-            - RSI drops below 45  
-            - Price closes below SMA20  
-            - Volatility Ratio < 0.8 (compression → trend exhaustion)  
-            - Sentiment Score ≤ **40**  
+            # --- SMA20 ---
+            sma20 = close.rolling(20).mean()
 
-            **Strategy Length:**  
-            - Designed for **10–30 day swing cycles**, depending on volatility regime.
-            """)
+            # --- VOLATILITY RATIO ---
+            tr = np.maximum((high - low),
+                            np.maximum(abs(high - close.shift(1)),
+                                       abs(low - close.shift(1))))
+            atr5 = tr.rolling(5).mean()
+            atr20 = tr.rolling(20).mean()
+            vol_ratio_series = atr5 / atr20
 
-            # --- BULLET-PROOFING METRICS ---
-            st.markdown("""
-            ### 🛡️ Bullet‑Proofing the Gain Outcome
-            To reduce false signals, the engine also evaluates:
-            - **Trend Integrity** → SMA20 slope must be positive  
-            - **Momentum Confirmation** → 5‑day ROC must be positive  
-            - **Volatility Regime** → ATR20 must be rising or stable  
-            - **Liquidity Check** → Volume > 20‑day average  
-            - **Breakout Validity** → TR/ATR ratio > 1.2  
+            # --- PRICE CHART WITH SIGNAL ARROWS ---
+            fig_price = go.Figure()
+            fig_price.add_trace(go.Scatter(
+                x=close.index, y=close,
+                name="Close", line=dict(color="#38bdf8", width=2)
+            ))
+            fig_price.add_trace(go.Scatter(
+                x=sma20.index, y=sma20,
+                name="SMA20", line=dict(color="#f59e0b", dash="dash")
+            ))
 
-            These filters dramatically reduce whipsaws and improve entry precision.
-            """)
+            # --- SIGNAL ARROWS ---
+            buy_signals = []
+            sell_signals = []
 
-            # --- VISUALIZATION ENGINE ---
-            st.markdown("### 📊 Technical Sentiment Visualization")
+            for i in range(1, len(close)):
+                # BUY
+                if (
+                    close.iloc[i] > sma20.iloc[i] and
+                    close.iloc[i-1] <= sma20.iloc[i-1] and
+                    rsi_series.iloc[i] > 50 and
+                    vol_ratio_series.iloc[i] > 1.0
+                ):
+                    buy_signals.append((close.index[i], close.iloc[i]))
 
-            try:
-                ticker_df = historical_data[selected_ticker].dropna()
-                close = ticker_df["Close"]
-                high = ticker_df["High"]
-                low = ticker_df["Low"]
+                # SELL
+                if (
+                    close.iloc[i] < sma20.iloc[i] and
+                    close.iloc[i-1] >= sma20.iloc[i-1] or
+                    rsi_series.iloc[i] < 45
+                ):
+                    sell_signals.append((close.index[i], close.iloc[i]))
 
-                # --- RSI ---
-                delta = close.diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                rsi_series = 100 - (100 / (1 + rs))
+            # Plot arrows
+            for t, p in buy_signals:
+                fig_price.add_annotation(
+                    x=t, y=p, text="⬆ BUY",
+                    showarrow=True, arrowhead=1,
+                    font=dict(color="#22c55e")
+                )
 
-                fig_rsi = go.Figure()
-                fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
-                                             mode="lines", name="RSI 14",
-                                             line=dict(color="#38bdf8", width=2)))
-                fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
-                fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-                fig_rsi.update_layout(title=f"{selected_ticker} — RSI (14)",
-                                      template="plotly_dark", height=250)
+            for t, p in sell_signals:
+                fig_price.add_annotation(
+                    x=t, y=p, text="⬇ SELL",
+                    showarrow=True, arrowhead=1,
+                    font=dict(color="#ef4444")
+                )
 
-                # --- PRICE vs SMA20 ---
-                sma20 = close.rolling(20).mean()
-                fig_price = go.Figure()
-                fig_price.add_trace(go.Scatter(x=close.index, y=close,
-                                               name="Close",
-                                               line=dict(color="#38bdf8", width=2)))
-                fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20,
-                                               name="SMA20",
-                                               line=dict(color="#f59e0b", dash="dash")))
-                fig_price.update_layout(title=f"{selected_ticker} — Price vs SMA20",
-                                        template="plotly_dark", height=300)
+            fig_price.update_layout(
+                title=f"{selected_ticker} — Price with Signals",
+                template="plotly_dark", height=300
+            )
+            st.plotly_chart(fig_price, use_container_width=True)
 
-                # --- VOLATILITY RATIO ---
-                tr = np.maximum((high - low),
-                                np.maximum(abs(high - close.shift(1)),
-                                           abs(low - close.shift(1))))
-                atr5 = tr.rolling(5).mean()
-                atr20 = tr.rolling(20).mean()
-                vol_ratio_series = atr5 / atr20
+            # --- BACKTEST ENGINE ---
+            st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
-                fig_vol = go.Figure()
-                fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index,
-                                             y=vol_ratio_series,
-                                             name="ATR5 / ATR20",
-                                             line=dict(color="#ef4444", width=2)))
-                fig_vol.update_layout(title=f"{selected_ticker} — Volatility Ratio",
-                                      template="plotly_dark", height=250)
+            returns = []
+            position = None
+            entry_price = None
 
-                # --- DISPLAY ---
-                st.plotly_chart(fig_price, use_container_width=True)
-                st.plotly_chart(fig_rsi, use_container_width=True)
-                st.plotly_chart(fig_vol, use_container_width=True)
+            for i in range(1, len(close)):
 
-            except Exception as e:
-                st.error(f"Visualization Engine Fault: {e}")
+                # ENTRY
+                if (
+                    position is None and
+                    close.iloc[i] > sma20.iloc[i] and
+                    rsi_series.iloc[i] > 50 and
+                    vol_ratio_series.iloc[i] > 1.0
+                ):
+                    position = "LONG"
+                    entry_price = close.iloc[i]
+
+                # EXIT
+                elif (
+                    position == "LONG" and (
+                        close.iloc[i] < sma20.iloc[i] or
+                        rsi_series.iloc[i] < 45 or
+                        vol_ratio_series.iloc[i] < 0.8
+                    )
+                ):
+                    returns.append((close.iloc[i] - entry_price) / entry_price)
+                    position = None
+                    entry_price = None
+
+            # Summary
+            if returns:
+                avg_return = np.mean(returns) * 100
+                win_rate = (np.sum(np.array(returns) > 0) / len(returns)) * 100
+                st.metric("Avg Trade Return", f"{avg_return:.2f}%")
+                st.metric("Win Rate", f"{win_rate:.1f}%")
+                st.metric("Total Trades", len(returns))
+            else:
+                st.info("Not enough signals to compute backtest.")
+
+            # --- PROBABILITY MODEL ---
+            st.markdown("### 🔮 Trend Continuation Probability")
+
+            prob = (
+                0.4 * (sentiment["metrics"]["rsi_14"] / 100) +
+                0.4 * (max(0, sentiment["metrics"]["ma_deviation_pct"]) / 20) +
+                0.2 * min(1.5, sentiment["metrics"]["volatility_ratio"]) / 1.5
+            )
+
+            probability = min(100, max(0, prob * 100))
+
+            st.metric("Continuation Probability", f"{probability:.1f}%")
 
         else:
             st.error(f"Engine Fault: {sentiment['error']}")
-
-# --- SENTIMENT GAUGE ---
-import plotly.graph_objects as go
-
-gauge_fig = go.Figure(go.Indicator(
-    mode="gauge+number",
-    value=sentiment["score"],
-    title={"text": "Sentiment Gauge (0–100)"},
-    gauge={
-        "axis": {"range": [0, 100]},
-        "bar": {"color": "#38bdf8"},
-        "steps": [
-            {"range": [0, 25], "color": "#1e3a8a"},
-            {"range": [25, 45], "color": "#0f766e"},
-            {"range": [45, 55], "color": "#475569"},
-            {"range": [55, 75], "color": "#ca8a04"},
-            {"range": [75, 100], "color": "#b91c1c"},
-        ],
-    }
-))
-
-st.plotly_chart(gauge_fig, use_container_width=True)
-
 
 # TAB 3
 with tab_macro:
