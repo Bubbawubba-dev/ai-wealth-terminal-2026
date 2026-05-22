@@ -41,7 +41,7 @@ def get_base_universe():
     return [
         "MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
         "RKLB", "SNDK", "CYBR", "INTC", "F", "PLTR", "SOUN", "BBAI", "NOW", "CIFR",
-        "AVGO", "MU", "STX", "LITE"
+        "AVGO", "MU", "STX", "LITE", "BE", "CRWV", "IREN", "CORZ", "TE", "APLD", "CLSK", "KEEL", "WYR"
     ]
 
 @st.cache_data(ttl=3600)
