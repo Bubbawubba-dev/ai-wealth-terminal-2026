@@ -759,44 +759,46 @@ else:
     st.metric("Signal Quality Score", f"{signal_quality:.1f}/100")
 
      # Narrative
-    narrative_lines = []
+narrative_lines = []
 
-    if latest_price > latest_sma20:
-        narrative_lines.append("Price is holding above its short-term trend base (SMA20).")
+if latest_price > latest_sma20:
+    narrative_lines.append("Price is holding above its short-term trend base (SMA20).")
+else:
+    narrative_lines.append("Price is trading below its short-term trend base (SMA20).")
+
+if latest_rsi < 45:
+    narrative_lines.append("Momentum is weak, with RSI in a lower band.")
+elif 45 <= latest_rsi <= 60:
+    narrative_lines.append("Momentum is balanced, with RSI in a neutral-to-positive zone.")
+elif 60 < latest_rsi <= 70:
+    narrative_lines.append("Momentum is strong, with RSI in a bullish band.")
+else:
+    narrative_lines.append("Momentum is elevated, suggesting a mature or extended move.")
+
+if latest_vol > 1.2:
+    narrative_lines.append("Volatility is elevated, increasing the risk of sharp swings.")
+elif latest_vol < 0.9:
+    narrative_lines.append("Volatility is compressed, often preceding expansion phases.")
+else:
+    narrative_lines.append("Volatility is within a normal operating range.")
+
+if returns:
+    if win_rate > 55:
+        narrative_lines.append("Historical pattern shows a favorable skew of winning trades.")
     else:
-        narrative_lines.append("Price is trading below its short-term trend base (SMA20).")
+        narrative_lines.append("Historical pattern shows mixed outcomes with no strong edge.")
+else:
+    narrative_lines.append("Insufficient historical signal data to characterize trade outcomes.")
 
-    if latest_rsi < 45:
-        narrative_lines.append("Momentum is weak, with RSI in a lower band.")
-    elif 45 <= latest_rsi <= 60:
-        narrative_lines.append("Momentum is balanced, with RSI in a neutral-to-positive zone.")
-    elif 60 < latest_rsi <= 70:
-        narrative_lines.append("Momentum is strong, with RSI in a bullish band.")
+# FIXED BLOCK
+if sentiment["status"] == "Active":
+    if narrative_lines:
+        st.write("• " + "\n• ".join(narrative_lines))
     else:
-        narrative_lines.append("Momentum is elevated, suggesting a mature or extended move.")
+        st.write("• Insufficient historical signal data to characterize trade outcomes.")
+else:
+    st.error(f"Engine Fault: {sentiment['error']}")
 
-    if latest_vol > 1.2:
-        narrative_lines.append("Volatility is elevated, increasing the risk of sharp swings.")
-    elif latest_vol < 0.9:
-        narrative_lines.append("Volatility is compressed, often preceding expansion phases.")
-    else:
-        narrative_lines.append("Volatility is within a normal operating range.")
-
-    if returns:
-        if win_rate > 55:
-            narrative_lines.append("Historical pattern shows a favorable skew of winning trades.")
-        else:
-            narrative_lines.append("Historical pattern shows mixed outcomes with no strong edge.")
-    else:
-        narrative_lines.append("Insufficient historical signal data to characterize trade outcomes.")
-
-    if sentiment["status"] == "Active":
-        if narrative_lines:
-            st.write("• " + "\n• ".join(narrative_lines))
-        else:
-            st.write("• Insufficient historical signal data to characterize trade outcomes.")
-    else: 
-        st.error(f"Engine Fault: {sentiment['error']}")
 
 
 # TAB 3 — LONG‑TERM MACRO + ENTRY/EXIT ENGINE
