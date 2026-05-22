@@ -381,13 +381,14 @@ with tab_momentum:
     else:
         st.error("Failed to load short-term historical metrics.")
 
-# TAB 2: TECHNICAL SENTIMENT
+# TAB 2: TECHNICAL SENTIMENT — UPGRADED
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
 
     if not historical_data.empty:
 
+        # --- TICKER SENTIMENT ---
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
         if sentiment["status"] == "Active":
@@ -425,6 +426,7 @@ with tab_sentiment:
             close = ticker_df["Close"]
             high = ticker_df["High"]
             low = ticker_df["Low"]
+            volume = ticker_df.get("Volume", None)
 
             # --- CALCULATE RSI ---
             delta = close.diff()
@@ -437,9 +439,11 @@ with tab_sentiment:
             sma20 = close.rolling(20).mean()
 
             # --- VOLATILITY RATIO ---
-            tr = np.maximum((high - low),
-                            np.maximum(abs(high - close.shift(1)),
-                                       abs(low - close.shift(1))))
+            tr = np.maximum(
+                (high - low),
+                np.maximum(abs(high - close.shift(1)),
+                           abs(low - close.shift(1)))
+            )
             atr5 = tr.rolling(5).mean()
             atr20 = tr.rolling(20).mean()
             vol_ratio_series = atr5 / atr20
@@ -455,7 +459,6 @@ with tab_sentiment:
                 name="SMA20", line=dict(color="#f59e0b", dash="dash")
             ))
 
-            # --- SIGNAL ARROWS ---
             buy_signals = []
             sell_signals = []
 
@@ -471,13 +474,12 @@ with tab_sentiment:
 
                 # SELL
                 if (
-                    close.iloc[i] < sma20.iloc[i] and
-                    close.iloc[i-1] >= sma20.iloc[i-1] or
+                    (close.iloc[i] < sma20.iloc[i] and
+                     close.iloc[i-1] >= sma20.iloc[i-1]) or
                     rsi_series.iloc[i] < 45
                 ):
                     sell_signals.append((close.index[i], close.iloc[i]))
 
-            # Plot arrows
             for t, p in buy_signals:
                 fig_price.add_annotation(
                     x=t, y=p, text="⬆ BUY",
@@ -494,7 +496,7 @@ with tab_sentiment:
 
             fig_price.update_layout(
                 title=f"{selected_ticker} — Price with Signals",
-                template="plotly_dark", height=300
+                template="plotly_dark", height=320
             )
             st.plotly_chart(fig_price, use_container_width=True)
 
@@ -502,18 +504,6 @@ with tab_sentiment:
             st.markdown("### Sentiment Structure Visualization")
 
             try:
-                ticker_df = historical_data[selected_ticker].dropna()
-                close = ticker_df["Close"]
-                high = ticker_df["High"]
-                low = ticker_df["Low"]
-
-                # RSI
-                delta = close.diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                rsi_series = 100 - (100 / (1 + rs))
-
                 fig_rsi = go.Figure()
                 fig_rsi.add_trace(go.Scatter(
                     x=rsi_series.index, y=rsi_series,
@@ -522,10 +512,10 @@ with tab_sentiment:
                 ))
                 fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
                 fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-                fig_rsi.update_layout(template="plotly_dark", height=250)
-
-                # SMA20
-                sma20 = close.rolling(20).mean()
+                fig_rsi.update_layout(
+                    title=f"{selected_ticker} — RSI (14)",
+                    template="plotly_dark", height=230
+                )
 
                 fig_price2 = go.Figure()
                 fig_price2.add_trace(go.Scatter(
@@ -536,16 +526,10 @@ with tab_sentiment:
                     x=sma20.index, y=sma20,
                     name="SMA20", line=dict(color="#f59e0b", dash="dash")
                 ))
-                fig_price2.update_layout(template="plotly_dark", height=300)
-
-                # Volatility Ratio
-                tr = np.maximum(
-                    (high - low),
-                    np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+                fig_price2.update_layout(
+                    title=f"{selected_ticker} — Price vs SMA20",
+                    template="plotly_dark", height=260
                 )
-                atr5 = tr.rolling(5).mean()
-                atr20 = tr.rolling(20).mean()
-                vol_ratio_series = atr5 / atr20
 
                 fig_vol = go.Figure()
                 fig_vol.add_trace(go.Scatter(
@@ -553,7 +537,10 @@ with tab_sentiment:
                     name="ATR5 / ATR20",
                     line=dict(color="#ef4444", width=2)
                 ))
-                fig_vol.update_layout(template="plotly_dark", height=250)
+                fig_vol.update_layout(
+                    title=f"{selected_ticker} — Volatility Ratio",
+                    template="plotly_dark", height=230
+                )
 
                 st.plotly_chart(fig_price2, use_container_width=True)
                 st.plotly_chart(fig_rsi, use_container_width=True)
@@ -562,12 +549,14 @@ with tab_sentiment:
             except Exception as e:
                 st.error(f"Visualization Engine Fault: {e}")
 
-            # --- BACKTEST ENGINE ---
+            # --- BACKTEST ENGINE + HOLD LENGTH ---
             st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
             returns = []
+            trade_lengths = []
             position = None
             entry_price = None
+            entry_index = None
 
             for i in range(1, len(close)):
 
@@ -580,6 +569,7 @@ with tab_sentiment:
                 ):
                     position = "LONG"
                     entry_price = close.iloc[i]
+                    entry_index = i
 
                 # EXIT
                 elif (
@@ -589,32 +579,169 @@ with tab_sentiment:
                         vol_ratio_series.iloc[i] < 0.8
                     )
                 ):
-                    returns.append((close.iloc[i] - entry_price) / entry_price)
+                    ret = (close.iloc[i] - entry_price) / entry_price
+                    returns.append(ret)
+                    if entry_index is not None:
+                        trade_lengths.append(i - entry_index)
                     position = None
                     entry_price = None
+                    entry_index = None
 
-            # Summary
             if returns:
                 avg_return = np.mean(returns) * 100
                 win_rate = (np.sum(np.array(returns) > 0) / len(returns)) * 100
-                st.metric("Avg Trade Return", f"{avg_return:.2f}%")
-                st.metric("Win Rate", f"{win_rate:.1f}%")
-                st.metric("Total Trades", len(returns))
+                avg_length = np.mean(trade_lengths) if trade_lengths else 0
+                median_length = np.median(trade_lengths) if trade_lengths else 0
+
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Avg Trade Return", f"{avg_return:.2f}%")
+                with c2:
+                    st.metric("Win Rate", f"{win_rate:.1f}%")
+                with c3:
+                    st.metric("Avg Hold (Days)", f"{avg_length:.1f}")
+                with c4:
+                    st.metric("Median Hold (Days)", f"{median_length:.1f}")
             else:
                 st.info("Not enough signals to compute backtest.")
 
-            # --- PROBABILITY MODEL ---
-            st.markdown("### 🔮 Trend Continuation Probability")
+            # --- GROWTH PROJECTION (PATTERN-BASED) ---
+            st.markdown("### 📊 Pattern-Based Growth Projection")
 
-            prob = (
+            if returns:
+                last_n = min(10, len(returns))
+                proj_10d = np.mean(returns[-last_n:]) * 100
+                proj_20d = np.mean(returns) * 100
+                confidence = win_rate
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Projected 10D Trend", f"{proj_10d:.2f}%")
+                with c2:
+                    st.metric("Projected 20D Trend", f"{proj_20d:.2f}%")
+                with c3:
+                    st.metric("Pattern Confidence", f"{confidence:.1f}%")
+            else:
+                st.caption("Projection unavailable: insufficient historical signal data.")
+
+            # --- TREND PHASE + SCENARIO MAP ---
+            st.markdown("### 🧭 Trend Phase & Scenario Map")
+
+            latest_rsi = float(rsi_series.iloc[-1]) if not np.isnan(rsi_series.iloc[-1]) else 50
+            latest_vol = float(vol_ratio_series.iloc[-1]) if not np.isnan(vol_ratio_series.iloc[-1]) else 1.0
+            latest_price = float(close.iloc[-1])
+            latest_sma20 = float(sma20.iloc[-1])
+
+            if latest_rsi < 55 and latest_price > latest_sma20:
+                trend_phase = "Early Trend"
+            elif 55 <= latest_rsi <= 70:
+                trend_phase = "Mid Trend"
+            elif latest_rsi > 70 and latest_vol < 1.2:
+                trend_phase = "Late Trend"
+            elif latest_rsi > 70 and latest_vol >= 1.2:
+                trend_phase = "Exhaustion Risk"
+            else:
+                trend_phase = "Indecisive / Transition"
+
+            # Simple scenario probabilities (heuristic, non-advisory)
+            cont_prob = (
                 0.4 * (sentiment["metrics"]["rsi_14"] / 100) +
                 0.4 * (max(0, sentiment["metrics"]["ma_deviation_pct"]) / 20) +
                 0.2 * min(1.5, sentiment["metrics"]["volatility_ratio"]) / 1.5
             )
+            cont_prob = float(min(1, max(0, cont_prob)))
+            pullback_prob = float(min(0.6, max(0, latest_vol - 1)))
+            sideway_prob = float(max(0, 1 - cont_prob - pullback_prob))
 
-            probability = min(100, max(0, prob * 100))
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Trend Phase", trend_phase)
+            with c2:
+                st.metric("Continuation Scenario", f"{cont_prob*100:.1f}%")
+            with c3:
+                st.metric("Sideways Scenario", f"{sideway_prob*100:.1f}%")
+            with c4:
+                st.metric("Pullback Scenario", f"{pullback_prob*100:.1f}%")
 
-            st.metric("Continuation Probability", f"{probability:.1f}%")
+            # --- MARKET SENTIMENT VS TICKER SENTIMENT ---
+            st.markdown("### 🌐 Market vs Ticker Sentiment")
+
+            market_scores = []
+            for tk in universe:
+                if tk in historical_data.columns.get_level_values(0):
+                    s = calculate_advanced_sentiment(historical_data, tk)
+                    if s.get("status") == "Active":
+                        market_scores.append(s.get("score", 50))
+
+            if market_scores:
+                market_sentiment = float(np.mean(market_scores))
+                rel_sentiment = sentiment["score"] - market_sentiment
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Ticker Sentiment", sentiment["score"])
+                with c2:
+                    st.metric("Market Sentiment", f"{market_sentiment:.1f}")
+                with c3:
+                    st.metric("Relative Sentiment", f"{rel_sentiment:+.1f}")
+            else:
+                st.caption("Market sentiment benchmark unavailable (insufficient data).")
+
+            # --- SIGNAL QUALITY & STORYLINE ---
+            st.markdown("### 🧠 Signal Quality & Narrative")
+
+            # Simple signal quality heuristic
+            quality_components = []
+
+            if latest_price > latest_sma20:
+                quality_components.append(1)
+            if 50 <= latest_rsi <= 70:
+                quality_components.append(1)
+            if 0.8 <= latest_vol <= 1.3:
+                quality_components.append(1)
+            if returns and win_rate > 50:
+                quality_components.append(1)
+
+            signal_quality = (sum(quality_components) / 4) * 100 if quality_components else 0
+
+            st.metric("Signal Quality Score", f"{signal_quality:.1f}/100")
+
+            # Narrative
+            narrative_lines = []
+
+            if latest_price > latest_sma20:
+                narrative_lines.append("Price is holding above its short-term trend base (SMA20).")
+            else:
+                narrative_lines.append("Price is trading below its short-term trend base (SMA20).")
+
+            if latest_rsi < 45:
+                narrative_lines.append("Momentum is weak, with RSI in a lower band.")
+            elif 45 <= latest_rsi <= 60:
+                narrative_lines.append("Momentum is balanced, with RSI in a neutral-to-positive zone.")
+            elif 60 < latest_rsi <= 70:
+                narrative_lines.append("Momentum is strong, with RSI in a bullish band.")
+            else:
+                narrative_lines.append("Momentum is elevated, suggesting a mature or extended move.")
+
+            if latest_vol > 1.2:
+                narrative_lines.append("Volatility is elevated, increasing the risk of sharp swings.")
+            elif latest_vol < 0.9:
+                narrative_lines.append("Volatility is compressed, often preceding expansion phases.")
+            else:
+                narrative_lines.append("Volatility is within a normal operating range.")
+
+            if returns:
+                if win_rate > 55:
+                    narrative_lines.append("Historical pattern shows a favorable skew of winning trades.")
+                else:
+                    narrative_lines.append("Historical pattern shows mixed outcomes with no strong edge.")
+            else:
+                narrative_lines.append("Insufficient historical signal data to characterize trade outcomes.")
+
+            st.write("• " + "\n• ".join(narrative_lines))
+
+        else:
+            st.error(f"Engine Fault: {sentiment['error']}")
 
 
 # TAB 3 — UPGRADED MACRO + FACTOR ENGINE
