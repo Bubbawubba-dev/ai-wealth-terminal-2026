@@ -432,72 +432,81 @@ with tab_sentiment:
             st.plotly_chart(fig_price, use_container_width=True)
 
             # --- SENTIMENT VISUALIZATION ENGINE ---
-st.markdown("### Sentiment Structure Visualization")
+            st.markdown("### Sentiment Structure Visualization")
 
-try:
-    ticker_df = historical_data[selected_ticker].dropna()
-    close = ticker_df["Close"]
-    high = ticker_df["High"]
-    low = ticker_df["Low"]
+            try:
+                ticker_df = historical_data[selected_ticker].dropna()
+                close = ticker_df["Close"]
+                high = ticker_df["High"]
+                low = ticker_df["Low"]
 
-    # RSI
-    delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    rsi_series = 100 - (100 / (1 + rs))
+                # RSI
+                delta = close.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                rsi_series = 100 - (100 / (1 + rs))
 
-    fig_rsi = go.Figure()
-    fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
-                                 mode="lines", name="RSI 14",
-                                 line=dict(color="#38bdf8", width=2)))
-    fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
-    fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-    fig_rsi.update_layout(template="plotly_dark", height=250)
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(
+                    x=rsi_series.index, y=rsi_series,
+                    mode="lines", name="RSI 14",
+                    line=dict(color="#38bdf8", width=2)
+                ))
+                fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
+                fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
+                fig_rsi.update_layout(template="plotly_dark", height=250)
 
-    # SMA20
-    sma20 = close.rolling(20).mean()
+                # SMA20
+                sma20 = close.rolling(20).mean()
 
-    fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(x=close.index, y=close,
-                                   name="Close", line=dict(color="#38bdf8", width=2)))
-    fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20,
-                                   name="SMA20", line=dict(color="#f59e0b", dash="dash")))
-    fig_price.update_layout(template="plotly_dark", height=300)
+                fig_price2 = go.Figure()
+                fig_price2.add_trace(go.Scatter(
+                    x=close.index, y=close,
+                    name="Close", line=dict(color="#38bdf8", width=2)
+                ))
+                fig_price2.add_trace(go.Scatter(
+                    x=sma20.index, y=sma20,
+                    name="SMA20", line=dict(color="#f59e0b", dash="dash")
+                ))
+                fig_price2.update_layout(template="plotly_dark", height=300)
 
-    # Volatility Ratio
-    tr = np.maximum((high - low),
-                    np.maximum(abs(high - close.shift(1)),
-                               abs(low - close.shift(1))))
-    atr5 = tr.rolling(5).mean()
-    atr20 = tr.rolling(20).mean()
-    vol_ratio_series = atr5 / atr20
+                # Volatility Ratio
+                tr = np.maximum(
+                    (high - low),
+                    np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+                )
+                atr5 = tr.rolling(5).mean()
+                atr20 = tr.rolling(20).mean()
+                vol_ratio_series = atr5 / atr20
 
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index, y=vol_ratio_series,
-                                 name="ATR5 / ATR20",
-                                 line=dict(color="#ef4444", width=2)))
-    fig_vol.update_layout(template="plotly_dark", height=250)
+                fig_vol = go.Figure()
+                fig_vol.add_trace(go.Scatter(
+                    x=vol_ratio_series.index, y=vol_ratio_series,
+                    name="ATR5 / ATR20",
+                    line=dict(color="#ef4444", width=2)
+                ))
+                fig_vol.update_layout(template="plotly_dark", height=250)
 
-    st.plotly_chart(fig_price, use_container_width=True)
-    st.plotly_chart(fig_rsi, use_container_width=True)
-    st.plotly_chart(fig_vol, use_container_width=True)
+                st.plotly_chart(fig_price2, use_container_width=True)
+                st.plotly_chart(fig_rsi, use_container_width=True)
+                st.plotly_chart(fig_vol, use_container_width=True)
 
-except Exception as e:
-    st.error(f"Visualization Engine Fault: {e}")
+            except Exception as e:
+                st.error(f"Visualization Engine Fault: {e}")
 
-    # --- BACKTEST ENGINE ---
-    st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
+            # --- BACKTEST ENGINE ---
+            st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
-    returns = []
-    position = None
-    entry_price = None
+            returns = []
+            position = None
+            entry_price = None
 
-    for i in range(1, len(close)):
+            for i in range(1, len(close)):
 
-    # ENTRY
-    if (
-    position is None and
+                # ENTRY
+                if (
+                    position is None and
                     close.iloc[i] > sma20.iloc[i] and
                     rsi_series.iloc[i] > 50 and
                     vol_ratio_series.iloc[i] > 1.0
@@ -540,8 +549,6 @@ except Exception as e:
 
             st.metric("Continuation Probability", f"{probability:.1f}%")
 
-        else:
-            st.error(f"Engine Fault: {sentiment['error']}")
 
 # TAB 3
 with tab_macro:
