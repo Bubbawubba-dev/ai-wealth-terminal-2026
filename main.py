@@ -753,6 +753,54 @@ with tab_macro:
         st.error("Engine Fault: Macro framework history inaccessible.")
     else:
 
+                # --- LONG-TERM ENTRY / EXIT LOGIC ---
+
+        def classify_entry_exit(row):
+            dist = row["Dist. from 200D (%)"]
+            ret_6m = row["6M Return (%)"]
+            regime = row["Macro Structure"]
+
+            # ENTRY ZONE (accumulation bias)
+            if regime in ["Bullish Extension 🚀", "Accumulation Phase ⏳"] and -10 <= dist <= +5:
+                entry = "✅ Accumulation Zone (Near 200D Support)"
+            elif regime in ["Accumulation Phase ⏳"] and dist < -10:
+                entry = "🟡 Early Accumulation (High Patience Needed)"
+            elif regime.startswith("Bear"):
+                entry = "🔻 Avoid New Long-Term Entries (Bear Structure)"
+            else:
+                entry = "⚪ Neutral / Wait for Better Structure"
+
+            # EXIT / TRIM RISK
+            if regime == "Bullish Extension 🚀" and dist > 20 and ret_6m > 30:
+                exit_zone = "🟥 Elevated Trim / Rebalance Risk"
+            elif dist > 15 and ret_6m > 20:
+                exit_zone = "🟠 Watch for Exhaustion / Tighten Risk"
+            elif dist < -15 and regime.startswith("Bear"):
+                exit_zone = "🔻 Capital Preservation Focus"
+            else:
+                exit_zone = "🟢 Hold / No Structural Exit Signal"
+
+            # HOLDING BIAS
+            if "Accummulation" in entry or "Accumulation" in entry:
+                bias = "Long-Term Accumulation Bias"
+            elif "Trim" in exit_zone or "Exhaustion" in exit_zone:
+                bias = "Hold / Trim on Strength"
+            elif "Bear" in regime:
+                bias = "Defensive / Underweight Bias"
+            else:
+                bias = "Core Hold / Monitor"
+
+            return pd.Series({
+                "Best Entry Zone": entry,
+                "Exit / Trim Zone": exit_zone,
+                "Holding Bias": bias
+            })
+
+        macro_df[["Best Entry Zone", "Exit / Trim Zone", "Holding Bias"]] = macro_df.apply(
+            classify_entry_exit, axis=1
+        )
+
+
         # --- BUILD MACRO TABLE ---
         macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
 
