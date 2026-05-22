@@ -369,17 +369,45 @@ tab_momentum, tab_sentiment, tab_macro = st.tabs([
     "🏛️ Macro Wealth & Long-Term Investment"
 ])
 
-# TAB 1
 with tab_momentum:
-    st.subheader("Explosive Short-Term Breakout Scanner")
-    if not historical_data.empty:
-        momentum_df = calculate_momentum_metrics(historical_data, universe)
-        if not momentum_df.empty:
-            st.dataframe(momentum_df, use_container_width=True, hide_index=True)
-        else:
-            st.warning("No assets matched momentum lookup thresholds.")
-    else:
+
+    st.markdown("## ⚡ Explosive Short‑Term Breakout Engine")
+
+    if historical_data.empty:
         st.error("Failed to load short-term historical metrics.")
+    else:
+        momentum_df = calculate_momentum_metrics(historical_data, universe)
+
+        if momentum_df.empty:
+            st.warning("No assets matched momentum lookup thresholds.")
+        else:
+
+            # ============================
+            # 1. MOMENTUM PRESSURE GAUGE
+            # ============================
+            def momentum_pressure_score(df):
+                # Normalize components to 0–100
+                rsi_score = min(max((df["RSI"].iloc[-1] - 30) * 2, 0), 100)
+                vol_score = min(max((df["Volatility"].iloc[-1] - 0.8) * 80, 0), 100)
+                slope_score = min(max(df["Slope"].iloc[-1] * 120, 0), 100)
+                return int((rsi_score + vol_score + slope_score) / 3)
+
+            score = momentum_pressure_score(momentum_df)
+
+            st.markdown(
+                f"""
+                <div style="
+                    padding: 18px;
+                    border-radius: 14px;
+                    background: rgba(255,255,255,0.06);
+                    border: 1px solid rgba(255,255,255,0.12);
+                    backdrop-filter: blur(8px);
+                    margin-bottom: 12px;
+                ">
+                    <span style="font-size: 1.2rem; font-weight: 600;">
+                        🔥 Momentum Pressure: <span style="color:#00eaff;">{score}/100</span>
+                    </span>
+
 
 # TAB 2: TECHNICAL SENTIMENT — UPGRADED
 with tab_sentiment:
