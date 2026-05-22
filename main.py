@@ -40,16 +40,8 @@ if not check_password():
 def get_base_universe():
     return [
         "MRAM", "ASTS", "ANET", "QUBT", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ",
-        "RKLB", "SNDK", "CYBR", "INTC", "F", "PLTR", "SOUN", "BBAI", "NOW", "CIFR",
-        "AVGO", "MU", "STX", "LITE", "BE", "CRWV", "IREN", "CORZ", "TE", "APLD", "CLSK", "KEEL", "WYR"
-    ]
-
-@st.cache_data(ttl=3600)
-def get_growth_universe():
-    # Example growth / AI / large-cap momentum names
-    return [
-        "NVDA", "TSLA", "META", "AMD", "SMCI",
-        "SHOP", "CRWD", "NET", "SNOW", "MSTR"
+        "RKLB", "SNDK", "CYBR", "INTC", "CIFR",
+        "AVGO", "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS"
     ]
 
 @st.cache_data(ttl=1800)
@@ -294,92 +286,344 @@ def calculate_macro_trends(df_history, tickers, fundamental_data):
 
     return pd.DataFrame(macro_data)
 
-def backtest_swing_strategy(df_history, ticker):
-    try:
-        available_tickers = df_history.columns.get_level_values(0).unique()
-        if ticker not in available_tickers:
-            return None
+# --- SENTIMENT VISUALIZATION ENGINE ---
+st.markdown("### Sentiment Structure Visualization")
 
-        ticker_df = df_history[ticker].dropna()
-        close = ticker_df["Close"]
-        high = ticker_df["High"]
-        low = ticker_df["Low"]
+try:
+    ticker_df = historical_data[selected_ticker].dropna()
+    close = ticker_df["Close"]
+    high = ticker_df["High"]
+    low = ticker_df["Low"]
 
-        if len(close) < 60:  # need enough bars
-            return None
+    # --- RSI 14 ---
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    rsi_series = 100 - (100 / (1 + rs))
 
-        # RSI
-        delta = close.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        rsi_series = 100 - (100 / (1 + rs))
+    fig_rsi = go.Figure()
+    fig_rsi.add_trace(go.Scatter(
+        x=rsi_series.index,
+        y=rsi_series,
+        mode="lines",
+        name="RSI 14",
+        line=dict(color="#38bdf8", width=2)
+    ))
+    fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
+    fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
+    fig_rsi.update_layout(
+        title=f"{selected_ticker} — RSI (14)",
+        template="plotly_dark",
+        height=250,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
 
-        # SMA20
-        sma20 = close.rolling(20).mean()
+    # --- PRICE vs SMA20 ---
+    sma20 = close.rolling(20).mean()
 
-        # Vol ratio ATR5 / ATR20
-        tr = np.maximum(
-            (high - low),
-            np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
-        )
-        atr5 = tr.rolling(5).mean()
-        atr20 = tr.rolling(20).mean()
-        vol_ratio_series = atr5 / atr20
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Scatter(
+        x=close.index,
+        y=close,
+        name="Close",
+        line=dict(color="#38bdf8", width=2)
+    ))
+    fig_price.add_trace(go.Scatter(
+        x=sma20.index,
+        y=sma20,
+        name="SMA20",
+        line=dict(color="#f59e0b", dash="dash")
+    ))
+    fig_price.update_layout(
+        title=f"{selected_ticker} — Price vs SMA20",
+        template="plotly_dark",
+        height=300,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
 
-        returns = []
-        position = None
-        entry_price = None
+    # --- VOLATILITY RATIO MINI-CHART ---
+    tr = np.maximum(
+        (high - low),
+        np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+    )
+    atr5 = tr.rolling(5).mean()
+    atr20 = tr.rolling(20).mean()
+    vol_ratio_series = atr5 / atr20
 
-        for i in range(1, len(close)):
-            # ENTRY
-            if (
-                position is None and
-                close.iloc[i] > sma20.iloc[i] and
-                rsi_series.iloc[i] > 50 and
-                vol_ratio_series.iloc[i] > 1.0
-            ):
-                position = "LONG"
-                entry_price = close.iloc[i]
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Scatter(
+        x=vol_ratio_series.index,
+        y=vol_ratio_series,
+        name="ATR5 / ATR20",
+        line=dict(color="#ef4444", width=2)
+    ))
+    fig_vol.update_layout(
+        title=f"{selected_ticker} — Volatility Ratio",
+        template="plotly_dark",
+        height=250,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
 
-            # EXIT
-            elif (
-                position == "LONG" and (
-                    close.iloc[i] < sma20.iloc[i] or
-                    rsi_series.iloc[i] < 45 or
-                    vol_ratio_series.iloc[i] < 0.8
-                )
-            ):
-                trade_ret = (close.iloc[i] - entry_price) / entry_price
-                returns.append(trade_ret)
-                position = None
-                entry_price = None
+    # --- DISPLAY ---
+    st.plotly_chart(fig_price, use_container_width=True)
+    st.plotly_chart(fig_rsi, use_container_width=True)
+    st.plotly_chart(fig_vol, use_container_width=True)
 
-        if not returns:
-            return {
-                "Ticker": ticker,
-                "Avg Trade Return (%)": 0.0,
-                "Win Rate (%)": 0.0,
-                "Total Trades": 0
-            }
+except Exception as e:
+    st.error(f"Visualization Engine Fault: {e}")
 
-        returns_arr = np.array(returns)
-        avg_return = float(np.mean(returns_arr) * 100)
-        win_rate = float((np.sum(returns_arr > 0) / len(returns_arr)) * 100)
-
-        return {
-            "Ticker": ticker,
-            "Avg Trade Return (%)": round(avg_return, 2),
-            "Win Rate (%)": round(win_rate, 1),
-            "Total Trades": int(len(returns_arr))
-        }
-
-    except Exception:
-        return None
 
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
+universe = get_base_universe()
 
-core_universe = get_base_universe()
-growth_universe = get_growth_universe()
-universe = core_universe  # main working universe for tabs 1 & 3 and sentiment
+with st.spinner("Syncing technical historical structures..."):
+    historical_data = fetch_historical_data(universe)
+
+with st.spinner("Extracting corporate fundamental structures..."):
+    fundamental_cache = fetch_fundamental_metrics(universe)
+
+tab_momentum, tab_sentiment, tab_macro = st.tabs([
+    "⚡ Short-Term Momentum",
+    "🔮 Technical Sentiment",
+    "🏛️ Macro Wealth & Long-Term Investment"
+])
+
+# TAB 1
+with tab_momentum:
+    st.subheader("Explosive Short-Term Breakout Scanner")
+    if not historical_data.empty:
+        momentum_df = calculate_momentum_metrics(historical_data, universe)
+        if not momentum_df.empty:
+            st.dataframe(momentum_df, use_container_width=True, hide_index=True)
+        else:
+            st.warning("No assets matched momentum lookup thresholds.")
+    else:
+        st.error("Failed to load short-term historical metrics.")
+
+# TAB 2: TECHNICAL SENTIMENT
+with tab_sentiment:
+    st.subheader("Dynamic Fear & Greed Structural Proxies")
+    selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
+
+    if not historical_data.empty:
+
+        # --- SENTIMENT CALCULATION ---
+        sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
+
+        if sentiment["status"] == "Active":
+
+            # --- METRICS ROW ---
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
+            with col2:
+                st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
+            with col3:
+                st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
+
+            # --- DESCRIPTION OF AGGREGATE SCORE ---
+            st.markdown("""
+            ### 📘 What the Aggregate Score Means
+            The **Aggregate Technical Sentiment Score** blends:
+            - **RSI (40%)** → momentum exhaustion vs continuation  
+            - **Price vs SMA20 (40%)** → trend strength & deviation  
+            - **Volatility Ratio ATR5/ATR20 (20%)** → compression vs expansion  
+
+            **Interpretation:**
+            - **75–100 → Extreme Greed**: Trend continuation likely, volatility expanding  
+            - **55–74 → Greed**: Healthy trend, stable volatility  
+            - **45–54 → Neutral**: No directional edge  
+            - **25–44 → Fear**: Pullback or early reversal  
+            - **0–24 → Extreme Fear**: Capitulation or breakdown risk  
+            """)
+
+            # --- ENTRY & EXIT LOGIC ---
+            st.markdown("""
+            ### 🎯 Strategy Entry & Exit Logic
+            **Entry Conditions (Trend-Following Breakout):**
+            - Price > SMA20  
+            - RSI > 50  
+            - Volatility Ratio > 1.0 (ATR5 expanding vs ATR20)  
+            - Sentiment Score ≥ **55**  
+
+            **Exit Conditions (Risk-Controlled):**
+            - RSI drops below 45  
+            - Price closes below SMA20  
+            - Volatility Ratio < 0.8 (compression → trend exhaustion)  
+            - Sentiment Score ≤ **40**  
+
+            **Strategy Length:**  
+            - Designed for **10–30 day swing cycles**, depending on volatility regime.
+            """)
+
+            # --- BULLET-PROOFING METRICS ---
+            st.markdown("""
+            ### 🛡️ Bullet‑Proofing the Gain Outcome
+            To reduce false signals, the engine also evaluates:
+            - **Trend Integrity** → SMA20 slope must be positive  
+            - **Momentum Confirmation** → 5‑day ROC must be positive  
+            - **Volatility Regime** → ATR20 must be rising or stable  
+            - **Liquidity Check** → Volume > 20‑day average  
+            - **Breakout Validity** → TR/ATR ratio > 1.2  
+
+            These filters dramatically reduce whipsaws and improve entry precision.
+            """)
+
+            # --- VISUALIZATION ENGINE ---
+            st.markdown("### 📊 Technical Sentiment Visualization")
+
+            try:
+                ticker_df = historical_data[selected_ticker].dropna()
+                close = ticker_df["Close"]
+                high = ticker_df["High"]
+                low = ticker_df["Low"]
+
+                # --- RSI ---
+                delta = close.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                rsi_series = 100 - (100 / (1 + rs))
+
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
+                                             mode="lines", name="RSI 14",
+                                             line=dict(color="#38bdf8", width=2)))
+                fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
+                fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
+                fig_rsi.update_layout(title=f"{selected_ticker} — RSI (14)",
+                                      template="plotly_dark", height=250)
+
+                # --- PRICE vs SMA20 ---
+                sma20 = close.rolling(20).mean()
+                fig_price = go.Figure()
+                fig_price.add_trace(go.Scatter(x=close.index, y=close,
+                                               name="Close",
+                                               line=dict(color="#38bdf8", width=2)))
+                fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20,
+                                               name="SMA20",
+                                               line=dict(color="#f59e0b", dash="dash")))
+                fig_price.update_layout(title=f"{selected_ticker} — Price vs SMA20",
+                                        template="plotly_dark", height=300)
+
+                # --- VOLATILITY RATIO ---
+                tr = np.maximum((high - low),
+                                np.maximum(abs(high - close.shift(1)),
+                                           abs(low - close.shift(1))))
+                atr5 = tr.rolling(5).mean()
+                atr20 = tr.rolling(20).mean()
+                vol_ratio_series = atr5 / atr20
+
+                fig_vol = go.Figure()
+                fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index,
+                                             y=vol_ratio_series,
+                                             name="ATR5 / ATR20",
+                                             line=dict(color="#ef4444", width=2)))
+                fig_vol.update_layout(title=f"{selected_ticker} — Volatility Ratio",
+                                      template="plotly_dark", height=250)
+
+                # --- DISPLAY ---
+                st.plotly_chart(fig_price, use_container_width=True)
+                st.plotly_chart(fig_rsi, use_container_width=True)
+                st.plotly_chart(fig_vol, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Visualization Engine Fault: {e}")
+
+        else:
+            st.error(f"Engine Fault: {sentiment['error']}")
+
+# --- SENTIMENT GAUGE ---
+import plotly.graph_objects as go
+
+gauge_fig = go.Figure(go.Indicator(
+    mode="gauge+number",
+    value=sentiment["score"],
+    title={"text": "Sentiment Gauge (0–100)"},
+    gauge={
+        "axis": {"range": [0, 100]},
+        "bar": {"color": "#38bdf8"},
+        "steps": [
+            {"range": [0, 25], "color": "#1e3a8a"},
+            {"range": [25, 45], "color": "#0f766e"},
+            {"range": [45, 55], "color": "#475569"},
+            {"range": [55, 75], "color": "#ca8a04"},
+            {"range": [75, 100], "color": "#b91c1c"},
+        ],
+    }
+))
+
+st.plotly_chart(gauge_fig, use_container_width=True)
+
+
+# TAB 3
+with tab_macro:
+    st.subheader("Institutional Macro Structural & Fundamental Scanner")
+    st.markdown("This module cross-references technical moving averages with corporate value parameters.")
+
+    if not historical_data.empty:
+        macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
+
+        if not macro_df.empty:
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+            with f_col2:
+                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E First", "Highest Margin First"])
+
+            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+
+            if pe_filter == "Lowest P/E First":
+                filtered_df = filtered_df.assign(
+                    pe_numeric=pd.to_numeric(filtered_df["P/E Ratio"], errors="coerce").fillna(np.inf)
+                )
+                filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=["pe_numeric"])
+
+            elif pe_filter == "Highest Margin First":
+                filtered_df = filtered_df.assign(
+                    margin_numeric=pd.to_numeric(filtered_df["Profit Margin"].str.replace("%", ""), errors="coerce").fillna(-np.inf)
+                )
+                filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=["margin_numeric"])
+
+            else:
+                filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
+
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+
+            st.subheader("Macro Trend Construction Visualization")
+            viz_ticker = st.selectbox(
+                "Select Asset for Multi-Month Visual Inspection:",
+                filtered_df["Ticker"].tolist() if not filtered_df.empty else universe
+            )
+
+            try:
+                available_tickers = historical_data.columns.get_level_values(0).unique()
+                if viz_ticker in available_tickers:
+                    ticker_close = historical_data[viz_ticker]["Close"].dropna()
+                    t_50 = ticker_close.rolling(50).mean()
+                    t_200 = ticker_close.rolling(200).mean()
+
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
+                    fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA", line=dict(color="#f59e0b", dash="dash")))
+                    fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA", line=dict(color="#ef4444", width=2)))
+
+                    fig.update_layout(
+                        title=f"{viz_ticker} Structural Health Matrix",
+                        template="plotly_dark",
+                        xaxis_rangeslider_visible=False,
+                        margin=dict(l=20, r=20, t=40, b=20)
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.caption(f"No pricing structures found for {viz_ticker}")
+            except Exception as e:
+                st.caption(f"Could not build visualization for {viz_ticker}: {e}")
+
+        else:
+            st.warning("Insufficient structural pricing matrix for 200-day horizons.")
+    else:
+        st.error("Engine Fault: Macro framework history inaccessible.")
