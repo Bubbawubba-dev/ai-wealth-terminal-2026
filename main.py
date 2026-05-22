@@ -687,6 +687,58 @@ with tab_sentiment:
             else:
                 st.caption("Market sentiment benchmark unavailable (insufficient data).")
 
+            # --- RELATIVE SENTIMENT HEATMAP ---
+st.markdown("### 🔥 Relative Sentiment Heatmap (Ticker vs Market)")
+
+# Build sentiment table for all tickers
+sentiment_table = []
+
+for tk in universe:
+    try:
+        s = calculate_advanced_sentiment(historical_data, tk)
+        if s.get("status") == "Active":
+            sentiment_table.append({
+                "Ticker": tk,
+                "Sentiment": s["score"]
+            })
+    except:
+        pass
+
+sentiment_df = pd.DataFrame(sentiment_table)
+
+if not sentiment_df.empty:
+    # Compute relative sentiment
+    sentiment_df["Relative"] = sentiment_df["Sentiment"] - sentiment_df["Sentiment"].mean()
+
+    # Pivot for heatmap
+    heatmap_df = sentiment_df.set_index("Ticker")[["Relative"]]
+
+    # Build heatmap
+    fig_heat = go.Figure(
+        data=go.Heatmap(
+            z=heatmap_df["Relative"],
+            x=["Relative Sentiment"],
+            y=heatmap_df.index,
+            colorscale=[
+                [0.0, "#7f1d1d"],   # deep red (underperforming)
+                [0.5, "#475569"],   # neutral grey
+                [1.0, "#14532d"]    # deep green (outperforming)
+            ],
+            colorbar=dict(title="Rel. Score")
+        )
+    )
+
+    fig_heat.update_layout(
+        height=400,
+        template="plotly_dark",
+        margin=dict(l=20, r=20, t=20, b=20)
+    )
+
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+else:
+    st.info("Relative sentiment heatmap unavailable — insufficient data.")
+
             # --- SIGNAL QUALITY & STORYLINE ---
             st.markdown("### 🧠 Signal Quality & Narrative")
 
