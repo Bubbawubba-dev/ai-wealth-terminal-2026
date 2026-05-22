@@ -792,8 +792,8 @@ else:
 
         st.write("• " + "\n• ".join(narrative_lines))
 
-    else:
-        st.error(f"Engine Fault: {sentiment['error']}")
+        else:
+            st.error(f"Engine Fault: {sentiment['error']}")
 
 
 # TAB 3 — LONG‑TERM MACRO + ENTRY/EXIT ENGINE
