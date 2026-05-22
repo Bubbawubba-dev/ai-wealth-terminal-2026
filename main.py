@@ -744,225 +744,101 @@ with tab_sentiment:
             st.error(f"Engine Fault: {sentiment['error']}")
 
 
-# TAB 3 — LONG‑TERM MACRO + ENTRY/EXIT ENGINE
+# TAB 3 — UPGRADED MACRO + FACTOR ENGINE
 with tab_macro:
     st.subheader("🏛️ Institutional Macro Structural & Fundamental Scanner")
-    st.markdown("This module cross-references technical moving averages with corporate value parameters and long-term structural entry/exit zones.")
+    st.markdown("This module cross-references technical, macro, and factor exposures.")
 
     if historical_data.empty:
         st.error("Engine Fault: Macro framework history inaccessible.")
     else:
 
-                # --- LONG-TERM ENTRY / EXIT LOGIC ---
+        # --- BUILD FACTOR TABLE ---
+        macro_records = []
+        for ticker in universe:
+            if ticker not in historical_data.columns.get_level_values(0):
+                continue
 
-        def classify_entry_exit(row):
-            dist = row["Dist. from 200D (%)"]
-            ret_6m = row["6M Return (%)"]
-            regime = row["Macro Structure"]
+            fundamentals = fundamental_cache.get(ticker, {})
+            scores = compute_factor_scores(historical_data, ticker, fundamentals)
 
-            # ENTRY ZONE (accumulation bias)
-            if regime in ["Bullish Extension 🚀", "Accumulation Phase ⏳"] and -10 <= dist <= +5:
-                entry = "✅ Accumulation Zone (Near 200D Support)"
-            elif regime in ["Accumulation Phase ⏳"] and dist < -10:
-                entry = "🟡 Early Accumulation (High Patience Needed)"
-            elif regime.startswith("Bear"):
-                entry = "🔻 Avoid New Long-Term Entries (Bear Structure)"
-            else:
-                entry = "⚪ Neutral / Wait for Better Structure"
-
-            # EXIT / TRIM RISK
-            if regime == "Bullish Extension 🚀" and dist > 20 and ret_6m > 30:
-                exit_zone = "🟥 Elevated Trim / Rebalance Risk"
-            elif dist > 15 and ret_6m > 20:
-                exit_zone = "🟠 Watch for Exhaustion / Tighten Risk"
-            elif dist < -15 and regime.startswith("Bear"):
-                exit_zone = "🔻 Capital Preservation Focus"
-            else:
-                exit_zone = "🟢 Hold / No Structural Exit Signal"
-
-            # HOLDING BIAS
-            if "Accummulation" in entry or "Accumulation" in entry:
-                bias = "Long-Term Accumulation Bias"
-            elif "Trim" in exit_zone or "Exhaustion" in exit_zone:
-                bias = "Hold / Trim on Strength"
-            elif "Bear" in regime:
-                bias = "Defensive / Underweight Bias"
-            else:
-                bias = "Core Hold / Monitor"
-
-            return pd.Series({
-                "Best Entry Zone": entry,
-                "Exit / Trim Zone": exit_zone,
-                "Holding Bias": bias
-            })
-
-        macro_df[["Best Entry Zone", "Exit / Trim Zone", "Holding Bias"]] = macro_df.apply(
-            classify_entry_exit, axis=1
-        )
-
-
-        # --- BUILD MACRO TABLE ---
-        macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
-
-        if macro_df.empty:
-            st.warning("Insufficient structural pricing matrix for 200-day horizons.")
-        else:
-
-            # --- LONG-TERM ENTRY / EXIT LOGIC ---
-            def classify_entry_exit(row):
-                dist = row["Dist. from 200D (%)"]
-                ret_6m = row["6M Return (%)"]
-                regime = row["Macro Structure"]
-
-                # ENTRY ZONE (accumulation bias)
-                if regime in ["Bullish Extension 🚀", "Accumulation Phase ⏳"] and -12 <= dist <= +5:
-                    entry = "🟢 Accumulation Zone (Near 200D Support)"
-                elif regime == "Accumulation Phase ⏳" and dist < -12:
-                    entry = "🟡 Deep Value Accumulation (High Patience)"
-                elif "Bear" in regime:
-                    entry = "🔻 Avoid New Long-Term Entries (Bear Structure)"
-                else:
-                    entry = "⚪ Neutral / Wait for Better Structure"
-
-                # EXIT / TRIM RISK
-                if regime == "Bullish Extension 🚀" and dist > 20 and ret_6m > 30:
-                    exit_zone = "🟥 Elevated Trim / Rebalance Risk"
-                elif dist > 15 and ret_6m > 20:
-                    exit_zone = "🟠 Watch for Exhaustion / Tighten Risk"
-                elif dist < -15 and "Bear" in regime:
-                    exit_zone = "🔻 Capital Preservation Focus"
-                else:
-                    exit_zone = "🟢 Hold / No Structural Exit Signal"
-
-                # HOLDING BIAS
-                if "Accu" in entry:
-                    bias = "Long-Term Accumulation Bias"
-                elif "Trim" in exit_zone or "Exhaustion" in exit_zone:
-                    bias = "Hold / Trim on Strength"
-                elif "Bear" in regime:
-                    bias = "Defensive / Underweight Bias"
-                else:
-                    bias = "Core Hold / Monitor"
-
-                return pd.Series({
-                    "Best Entry Zone": entry,
-                    "Exit / Trim Zone": exit_zone,
-                    "Holding Bias": bias
+            if scores:
+                macro_records.append({
+                    "Ticker": ticker,
+                    **scores,
+                    "Market Cap": fundamentals.get("Market Cap", "N/A"),
+                    "P/E Ratio": fundamentals.get("P/E Ratio", "N/A"),
+                    "Profit Margin": fundamentals.get("Profit Margin", "N/A")
                 })
 
-            macro_df[["Best Entry Zone", "Exit / Trim Zone", "Holding Bias"]] = macro_df.apply(
-                classify_entry_exit, axis=1
-            )
+        macro_df = pd.DataFrame(macro_records)
 
-            # --- LONG-TERM ENTRY WATCHLIST WIDGET ---
-            st.markdown("## 🟢 Long-Term Entry Watchlist (Top Accumulation Candidates)")
+        if macro_df.empty:
+            st.warning("No macro-factor data available.")
+        else:
 
-            entry_candidates = macro_df[
-                macro_df["Best Entry Zone"].str.contains("Accu")
-            ].sort_values("Dist. from 200D (%)", ascending=True)
+            # --- TOP PICKS ---
+            st.markdown("## 🏆 Top Picks (Composite Score Ranking)")
+            top5 = macro_df.sort_values("Composite", ascending=False).head(5)
 
-            if entry_candidates.empty:
-                st.info("No assets currently in long-term accumulation zones.")
-            else:
-                for _, row in entry_candidates.head(6).iterrows():
-                    st.markdown(
-                        f"""
-                        <div style="padding:12px; border-radius:10px; background:#1e293b; margin-bottom:10px;">
-                            <h3 style="color:#38bdf8;">{row['Ticker']}</h3>
-                            <b>Price:</b> {row['Current Price']}<br>
-                            <b>Distance from 200D:</b> {row['Dist. from 200D (%)']:.2f}%<br>
-                            <b>6M Return:</b> {row['6M Return (%)']:.2f}%<br>
-                            <b>Macro Structure:</b> {row['Macro Structure']}<br>
-                            <b>Entry Zone:</b> {row['Best Entry Zone']}<br>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+            for _, row in top5.iterrows():
+                st.markdown(
+                    f"""
+                    <div style="padding:12px; border-radius:10px; background:#1e293b; margin-bottom:10px;">
+                        <h3 style="color:#38bdf8;">{row['Ticker']}</h3>
+                        <b>Composite Score:</b> {row['Composite']:.2f}<br>
+                        <b>Trend Strength:</b> {row['Trend']}<br>
+                        <b>6M Return:</b> {row['6M']:.2f}%<br>
+                        <b>Quality:</b> {row['Quality']:.2f}<br>
+                        <b>Value:</b> {row['Value']:.4f}<br>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
             st.divider()
 
-            # --- TRIM RISK RADAR ---
-            st.markdown("## 🟥 Trim Risk Radar (Extended / Overstretched Structures)")
+            # --- HEATMAP ---
+            st.markdown("## 🔥 Multi‑Month Structural Heatmap")
 
-            trim_risk = macro_df[
-                macro_df["Exit / Trim Zone"].str.contains("Trim|Exhaustion")
-            ].sort_values("Dist. from 200D (%)", ascending=False)
+            heatmap_df = macro_df[["Ticker", "1M", "3M", "6M", "Volatility", "Trend"]].set_index("Ticker")
 
-            if trim_risk.empty:
-                st.info("No assets currently showing structural trim/exhaustion risk.")
-            else:
-                for _, row in trim_risk.head(6).iterrows():
-                    st.markdown(
-                        f"""
-                        <div style="padding:12px; border-radius:10px; background:#3b1d1d; margin-bottom:10px;">
-                            <h3 style="color:#f87171;">{row['Ticker']}</h3>
-                            <b>Price:</b> {row['Current Price']}<br>
-                            <b>Distance from 200D:</b> {row['Dist. from 200D (%)']:.2f}%<br>
-                            <b>6M Return:</b> {row['6M Return (%)']:.2f}%<br>
-                            <b>Macro Structure:</b> {row['Macro Structure']}<br>
-                            <b>Trim Zone:</b> {row['Exit / Trim Zone']}<br>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+            fig_heat = go.Figure(data=go.Heatmap(
+                z=heatmap_df.values,
+                x=heatmap_df.columns,
+                y=heatmap_df.index,
+                colorscale="RdYlGn"
+            ))
+            fig_heat.update_layout(height=500, template="plotly_dark")
+            st.plotly_chart(fig_heat, use_container_width=True)
 
             st.divider()
 
-            # --- FILTERS ---
-            f_col1, f_col2 = st.columns(2)
-            with f_col1:
-                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
-                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
-            with f_col2:
-                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E First", "Highest Margin First"])
+            # --- RADAR CHART ---
+            st.markdown("## 🧭 Factor Exposure Radar Chart")
 
-            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+            radar_ticker = st.selectbox("Select Ticker for Radar Analysis:", macro_df["Ticker"].tolist())
+            row = macro_df[macro_df["Ticker"] == radar_ticker].iloc[0]
 
-            if pe_filter == "Lowest P/E First":
-                filtered_df = filtered_df.assign(
-                    pe_numeric=pd.to_numeric(filtered_df["P/E Ratio"], errors="coerce").fillna(np.inf)
-                ).sort_values("pe_numeric").drop(columns=["pe_numeric"])
+            radar_categories = ["Quality", "Value", "Growth", "Stability", "Trend"]
+            radar_values = [
+                row["Quality"],
+                row["Value"] * 50,
+                row["Growth"],
+                row["Stability"] * 20,
+                row["Trend"] * 10
+            ]
 
-            elif pe_filter == "Highest Margin First":
-                filtered_df = filtered_df.assign(
-                    margin_numeric=pd.to_numeric(filtered_df["Profit Margin"].str.replace("%", ""), errors="coerce").fillna(-np.inf)
-                ).sort_values("margin_numeric", ascending=False).drop(columns=["margin_numeric"])
-
-            else:
-                filtered_df = filtered_df.sort_values("Dist. from 200D (%)")
-
-            # --- DISPLAY TABLE ---
-            st.dataframe(
-                filtered_df[
-                    [
-                        "Ticker",
-                        "Current Price",
-                        "Market Cap",
-                        "P/E Ratio",
-                        "Profit Margin",
-                        "Dist. from 200D (%)",
-                        "6M Return (%)",
-                        "Macro Structure",
-                        "Best Entry Zone",
-                        "Exit / Trim Zone",
-                        "Holding Bias",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=radar_values + [radar_values[0]],
+                theta=radar_categories + [radar_categories[0]],
+                fill="toself",
+                line=dict(color="#38bdf8")
+            ))
+            fig_radar.update_layout(
+                polar=dict(bgcolor="#0f172a"),
+                template="plotly_dark",
+                height=500
             )
-
-            # --- VISUALIZATION ---
-            st.subheader("Macro Trend Construction Visualization")
-            viz_ticker = st.selectbox(
-                "Select Asset for Multi-Month Visual Inspection:",
-                filtered_df["Ticker"].tolist()
-            )
-
-            try:
-                ticker_close = historical_data[viz_ticker]["Close"].dropna()
-                t_50 = ticker_close.rolling(50).mean()
-                t_200 = ticker_close.rolling(200).mean()
-
-                fig = go.Figure()
-
+            st.plotly_chart(fig_radar, use_container_width=True)
