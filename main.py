@@ -852,6 +852,22 @@ else:
 
     trim_risk = trim_risk.sort_values("Risk Rank", ascending=False)
 
+    st.dataframe(
+        trim_risk[
+            [
+                "Ticker",
+                "Current Price",
+                "Dist. from 200D (%)",
+                "6M Return (%)",
+                "Macro Structure",
+                "Exit / Trim Zone",
+                "Risk Rank"
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
+
     # Display as a table
     st.dataframe(
         trim_risk[
