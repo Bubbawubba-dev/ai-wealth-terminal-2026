@@ -790,8 +790,10 @@ else:
     else:
         narrative_lines.append("Insufficient historical signal data to characterize trade outcomes.")
 
-        st.write("• " + "\n• ".join(narrative_lines))
-    else:
+    if: sentiment["status"] == "Active":
+        if: narrative_lines
+            st.write("• " + "\n• ".join(narrative_lines))
+    else: 
         st.error(f"Engine Fault: {sentiment['error']}")
 
 
