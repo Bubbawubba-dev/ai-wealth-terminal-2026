@@ -806,7 +806,7 @@ with tab_macro:
                 classify_entry_exit, axis=1
             )
 
-            # --- LONG-TERM ENTRY WATCHLIST WIDGET ---
+            # --- LONG-TERM ENTRY WATCHLIST ---
             st.markdown("## 🟢 Long-Term Entry Watchlist (Top Accumulation Candidates)")
 
             entry_candidates = macro_df[
@@ -816,78 +816,85 @@ with tab_macro:
             if entry_candidates.empty:
                 st.info("No assets currently in long-term accumulation zones.")
             else:
-                for _, row in entry_candidates.head(6).iterrows():
-                    st.markdown(
-                        f"""
-                        <div style="padding:12px; border-radius:10px; background:#1e293b; margin-bottom:10px;">
-                            <h3 style="color:#38bdf8;">{row['Ticker']}</h3>
-                            <b>Price:</b> {row['Current Price']}<br>
-                            <b>Distance from 200D:</b> {row['Dist. from 200D (%)']:.2f}%<br>
-                            <b>6M Return:</b> {row['6M Return (%)']:.2f}%<br>
-                            <b>Macro Structure:</b> {row['Macro Structure']}<br>
-                            <b>Entry Zone:</b> {row['Best Entry Zone']}<br>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                st.dataframe(
+                    entry_candidates[
+                        [
+                            "Ticker",
+                            "Current Price",
+                            "Dist. from 200D (%)",
+                            "6M Return (%)",
+                            "Macro Structure",
+                            "Best Entry Zone"
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             st.divider()
 
-       # --- TRIM RISK RADAR (TABULATED) ---
-st.markdown("## 🟥 Trim Risk Radar — Extended / Overstretched Structures")
+            # --- TRIM RISK RADAR (TABULATED) ---
+            st.markdown("## 🟥 Trim Risk Radar — Extended / Overstretched Structures")
 
-trim_risk = macro_df[
-    macro_df["Exit / Trim Zone"].str.contains("Trim|Exhaustion")
-].copy()
+            trim_risk = macro_df[
+                macro_df["Exit / Trim Zone"].str.contains("Trim|Exhaustion")
+            ].copy()
 
-if trim_risk.empty:
-    st.info("No assets currently showing structural trim/exhaustion risk.")
-else:
-    # Add numeric ranking columns for better analysis
-    trim_risk["Abs Dist from 200D"] = trim_risk["Dist. from 200D (%)"].abs()
-    trim_risk["Risk Rank"] = (
-        trim_risk["Abs Dist from 200D"] * 0.6 +
-        trim_risk["6M Return (%)"] * 0.4
-    )
+            if trim_risk.empty:
+                st.info("No assets currently showing structural trim/exhaustion risk.")
+            else:
+                trim_risk["Abs Dist from 200D"] = trim_risk["Dist. from 200D (%)"].abs()
+                trim_risk["Risk Rank"] = (
+                    trim_risk["Abs Dist from 200D"] * 0.6 +
+                    trim_risk["6M Return (%)"] * 0.4
+                )
 
-    trim_risk = trim_risk.sort_values("Risk Rank", ascending=False)
+                trim_risk = trim_risk.sort_values("Risk Rank", ascending=False)
 
-    st.dataframe(
-        trim_risk[
-            [
-                "Ticker",
-                "Current Price",
-                "Dist. from 200D (%)",
-                "6M Return (%)",
-                "Macro Structure",
-                "Exit / Trim Zone",
-                "Risk Rank"
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True
-    )
+                st.dataframe(
+                    trim_risk[
+                        [
+                            "Ticker",
+                            "Current Price",
+                            "Dist. from 200D (%)",
+                            "6M Return (%)",
+                            "Macro Structure",
+                            "Exit / Trim Zone",
+                            "Risk Rank"
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-    # Display as a table
-    st.dataframe(
-        trim_risk[
-            [
-                "Ticker",
-                "Current Price",
-                "Dist. from 200D (%)",
-                "6M Return (%)",
-                "Macro Structure",
-                "Exit / Trim Zone",
-                "Risk Rank"
-            ]
-        ],
-        use_container_width=True,
-        hide_index=True
-    )
+            st.divider()
 
-         # --- DISPLAY TABLE ---
-        st.dataframe(
-             filtered_df[
+            # --- FILTERS ---
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+            with f_col2:
+                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E First", "Highest Margin First"])
+
+            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+
+            if pe_filter == "Lowest P/E First":
+                filtered_df = filtered_df.assign(
+                    pe_numeric=pd.to_numeric(filtered_df["P/E Ratio"], errors="coerce").fillna(np.inf)
+                ).sort_values("pe_numeric").drop(columns=["pe_numeric"])
+
+            elif pe_filter == "Highest Margin First":
+                filtered_df = filtered_df.assign(
+                    margin_numeric=pd.to_numeric(filtered_df["Profit Margin"].str.replace("%", ""), errors="coerce").fillna(-np.inf)
+                ).sort_values("margin_numeric", ascending=False).drop(columns=["margin_numeric"])
+
+            else:
+                filtered_df = filtered_df.sort_values("Dist. from 200D (%)")
+
+            # --- DISPLAY TABLE ---
+            st.dataframe(
+                filtered_df[
                     [
                         "Ticker",
                         "Current Price",
