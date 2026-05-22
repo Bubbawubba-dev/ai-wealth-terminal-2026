@@ -739,8 +739,8 @@ if not sentiment_df.empty:
 else:
     st.info("Relative sentiment heatmap unavailable — insufficient data.")
 
-            # --- SIGNAL QUALITY & STORYLINE ---
-            st.markdown("### 🧠 Signal Quality & Narrative")
+      # --- SIGNAL QUALITY & STORYLINE ---
+    st.markdown("### 🧠 Signal Quality & Narrative")
 
             # Simple signal quality heuristic
             quality_components = []
