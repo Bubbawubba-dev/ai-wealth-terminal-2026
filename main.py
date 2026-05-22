@@ -550,72 +550,101 @@ with tab_sentiment:
             st.metric("Continuation Probability", f"{probability:.1f}%")
 
 
-# TAB 3
+# TAB 3 — UPGRADED MACRO + FACTOR ENGINE
 with tab_macro:
-    st.subheader("Institutional Macro Structural & Fundamental Scanner")
-    st.markdown("This module cross-references technical moving averages with corporate value parameters.")
+    st.subheader("🏛️ Institutional Macro Structural & Fundamental Scanner")
+    st.markdown("This module cross-references technical, macro, and factor exposures.")
 
-    if not historical_data.empty:
-        macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
-
-        if not macro_df.empty:
-            f_col1, f_col2 = st.columns(2)
-            with f_col1:
-                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
-                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
-            with f_col2:
-                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E First", "Highest Margin First"])
-
-            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
-
-            if pe_filter == "Lowest P/E First":
-                filtered_df = filtered_df.assign(
-                    pe_numeric=pd.to_numeric(filtered_df["P/E Ratio"], errors="coerce").fillna(np.inf)
-                )
-                filtered_df = filtered_df.sort_values(by="pe_numeric", ascending=True).drop(columns=["pe_numeric"])
-
-            elif pe_filter == "Highest Margin First":
-                filtered_df = filtered_df.assign(
-                    margin_numeric=pd.to_numeric(filtered_df["Profit Margin"].str.replace("%", ""), errors="coerce").fillna(-np.inf)
-                )
-                filtered_df = filtered_df.sort_values(by="margin_numeric", ascending=False).drop(columns=["margin_numeric"])
-
-            else:
-                filtered_df = filtered_df.sort_values(by="Dist. from 200D (%)", ascending=True)
-
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-
-            st.subheader("Macro Trend Construction Visualization")
-            viz_ticker = st.selectbox(
-                "Select Asset for Multi-Month Visual Inspection:",
-                filtered_df["Ticker"].tolist() if not filtered_df.empty else universe
-            )
-
-            try:
-                available_tickers = historical_data.columns.get_level_values(0).unique()
-                if viz_ticker in available_tickers:
-                    ticker_close = historical_data[viz_ticker]["Close"].dropna()
-                    t_50 = ticker_close.rolling(50).mean()
-                    t_200 = ticker_close.rolling(200).mean()
-
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
-                    fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA", line=dict(color="#f59e0b", dash="dash")))
-                    fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA", line=dict(color="#ef4444", width=2)))
-
-                    fig.update_layout(
-                        title=f"{viz_ticker} Structural Health Matrix",
-                        template="plotly_dark",
-                        xaxis_rangeslider_visible=False,
-                        margin=dict(l=20, r=20, t=40, b=20)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.caption(f"No pricing structures found for {viz_ticker}")
-            except Exception as e:
-                st.caption(f"Could not build visualization for {viz_ticker}: {e}")
-
-        else:
-            st.warning("Insufficient structural pricing matrix for 200-day horizons.")
-    else:
+    if historical_data.empty:
         st.error("Engine Fault: Macro framework history inaccessible.")
+    else:
+
+        # --- BUILD FACTOR TABLE ---
+        macro_records = []
+        for ticker in universe:
+            if ticker not in historical_data.columns.get_level_values(0):
+                continue
+
+            fundamentals = fundamental_cache.get(ticker, {})
+            scores = compute_factor_scores(historical_data, ticker, fundamentals)
+
+            if scores:
+                macro_records.append({
+                    "Ticker": ticker,
+                    **scores,
+                    "Market Cap": fundamentals.get("Market Cap", "N/A"),
+                    "P/E Ratio": fundamentals.get("P/E Ratio", "N/A"),
+                    "Profit Margin": fundamentals.get("Profit Margin", "N/A")
+                })
+
+        macro_df = pd.DataFrame(macro_records)
+
+        if macro_df.empty:
+            st.warning("No macro-factor data available.")
+        else:
+
+            # --- TOP PICKS ---
+            st.markdown("## 🏆 Top Picks (Composite Score Ranking)")
+            top5 = macro_df.sort_values("Composite", ascending=False).head(5)
+
+            for _, row in top5.iterrows():
+                st.markdown(
+                    f"""
+                    <div style="padding:12px; border-radius:10px; background:#1e293b; margin-bottom:10px;">
+                        <h3 style="color:#38bdf8;">{row['Ticker']}</h3>
+                        <b>Composite Score:</b> {row['Composite']:.2f}<br>
+                        <b>Trend Strength:</b> {row['Trend']}<br>
+                        <b>6M Return:</b> {row['6M']:.2f}%<br>
+                        <b>Quality:</b> {row['Quality']:.2f}<br>
+                        <b>Value:</b> {row['Value']:.4f}<br>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+            st.divider()
+
+            # --- HEATMAP ---
+            st.markdown("## 🔥 Multi‑Month Structural Heatmap")
+
+            heatmap_df = macro_df[["Ticker", "1M", "3M", "6M", "Volatility", "Trend"]].set_index("Ticker")
+
+            fig_heat = go.Figure(data=go.Heatmap(
+                z=heatmap_df.values,
+                x=heatmap_df.columns,
+                y=heatmap_df.index,
+                colorscale="RdYlGn"
+            ))
+            fig_heat.update_layout(height=500, template="plotly_dark")
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+            st.divider()
+
+            # --- RADAR CHART ---
+            st.markdown("## 🧭 Factor Exposure Radar Chart")
+
+            radar_ticker = st.selectbox("Select Ticker for Radar Analysis:", macro_df["Ticker"].tolist())
+            row = macro_df[macro_df["Ticker"] == radar_ticker].iloc[0]
+
+            radar_categories = ["Quality", "Value", "Growth", "Stability", "Trend"]
+            radar_values = [
+                row["Quality"],
+                row["Value"] * 50,
+                row["Growth"],
+                row["Stability"] * 20,
+                row["Trend"] * 10
+            ]
+
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=radar_values + [radar_values[0]],
+                theta=radar_categories + [radar_categories[0]],
+                fill="toself",
+                line=dict(color="#38bdf8")
+            ))
+            fig_radar.update_layout(
+                polar=dict(bgcolor="#0f172a"),
+                template="plotly_dark",
+                height=500
+            )
+            st.plotly_chart(fig_radar, use_container_width=True)
