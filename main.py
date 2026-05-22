@@ -286,6 +286,73 @@ def calculate_macro_trends(df_history, tickers, fundamental_data):
 
     return pd.DataFrame(macro_data)
 
+def compute_factor_scores(df_history, ticker, fundamentals):
+    try:
+        df = df_history[ticker].dropna()
+        close = df["Close"]
+
+        # Momentum factors
+        ret_1m = (close.iloc[-1] - close.iloc[-21]) / close.iloc[-21] * 100 if len(close) > 21 else 0
+        ret_3m = (close.iloc[-1] - close.iloc[-63]) / close.iloc[-63] * 100 if len(close) > 63 else 0
+        ret_6m = (close.iloc[-1] - close.iloc[-126]) / close.iloc[-126] * 100 if len(close) > 126 else 0
+
+        # Trend factors
+        sma50 = close.rolling(50).mean().iloc[-1]
+        sma200 = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else sma50
+        trend_strength = (
+            3 if close.iloc[-1] > sma50 > sma200 else
+            1 if close.iloc[-1] > sma200 else
+            -1 if sma50 > sma200 else
+            -3
+        )
+
+        # Volatility
+        high = df["High"]
+        low = df["Low"]
+        tr = np.maximum(
+            (high - low),
+            np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+        )
+        atr20 = tr.rolling(20).mean().iloc[-1]
+        volatility = atr20 / close.iloc[-1]
+        stability = 1 / volatility if volatility > 0 else 0
+
+        # Fundamentals
+        pe = fundamentals.get("P/E Ratio", "N/A")
+        margin = fundamentals.get("Profit Margin", "N/A")
+        margin_val = float(margin.replace("%", "")) if margin != "N/A" else 0
+        pe_val = float(pe) if pe != "N/A" else 50
+
+        quality = margin_val
+        value = 1 / pe_val if pe_val > 0 else 0
+        growth = ret_6m
+
+        # Composite score
+        composite = (
+            (ret_3m * 0.25) +
+            (trend_strength * 10 * 0.25) +
+            (stability * 20 * 0.25) +
+            (quality * 0.15) +
+            (value * 50 * 0.10)
+        )
+
+        return {
+            "1M": ret_1m,
+            "3M": ret_3m,
+            "6M": ret_6m,
+            "Trend": trend_strength,
+            "Volatility": volatility,
+            "Stability": stability,
+            "Quality": quality,
+            "Value": value,
+            "Growth": growth,
+            "Composite": composite
+        }
+
+    except Exception:
+        return None
+
+
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
