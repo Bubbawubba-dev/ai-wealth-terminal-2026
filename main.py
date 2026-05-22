@@ -833,7 +833,7 @@ with tab_macro:
 
             st.divider()
 
-        # --- TRIM RISK RADAR (TABULATED) ---
+       # --- TRIM RISK RADAR (TABULATED) ---
 st.markdown("## 🟥 Trim Risk Radar — Extended / Overstretched Structures")
 
 trim_risk = macro_df[
@@ -869,9 +869,9 @@ else:
         hide_index=True
     )
 
-            # --- DISPLAY TABLE ---
-            st.dataframe(
-                filtered_df[
+         # --- DISPLAY TABLE ---
+        st.dataframe(
+             filtered_df[
                     [
                         "Ticker",
                         "Current Price",
