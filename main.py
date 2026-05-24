@@ -369,23 +369,17 @@ tab_momentum, tab_sentiment, tab_macro = st.tabs([
     "🏛️ Macro Wealth & Long-Term Investment"
 ])
 
-# TAB 1 — Short-Term Momentum (clean base)
+# TAB 1
 with tab_momentum:
     st.subheader("Explosive Short-Term Breakout Scanner")
-
-    if historical_data.empty:
-        st.error("Failed to load short-term historical metrics.")
-    else:
+    if not historical_data.empty:
         momentum_df = calculate_momentum_metrics(historical_data, universe)
-
-        if momentum_df.empty:
-            st.warning("No assets matched momentum lookup thresholds.")
+        if not momentum_df.empty:
+            st.dataframe(momentum_df, use_container_width=True, hide_index=True)
         else:
-            st.dataframe(
-                momentum_df,
-                use_container_width=True,
-                hide_index=True
-            )
+            st.warning("No assets matched momentum lookup thresholds.")
+    else:
+        st.error("Failed to load short-term historical metrics.")
 
 # TAB 2: TECHNICAL SENTIMENT — UPGRADED
 with tab_sentiment:
