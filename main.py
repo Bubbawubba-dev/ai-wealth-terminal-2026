@@ -369,15 +369,176 @@ tab_momentum, tab_sentiment, tab_macro = st.tabs([
     "🏛️ Macro Wealth & Long-Term Investment"
 ])
 
-# TAB 1
+# TAB 1 — Explosive Short-Term Breakout Intelligence Engine
 with tab_momentum:
     st.subheader("Explosive Short-Term Breakout Scanner")
+
+    # -----------------------------
+    # Helper Functions
+    # -----------------------------
+
+    def calculate_breakout_score(row):
+        score = 0
+
+        # Price vs SMA20/SMA50
+        if row["close"] > row["sma20"]:
+            score += 15
+        if row["close"] > row["sma50"]:
+            score += 15
+
+        # Volume expansion
+        if row["volume"] > row["vol_avg20"] * 1.5:
+            score += 20
+        elif row["volume"] > row["vol_avg20"]:
+            score += 10
+
+        # RSI acceleration
+        if row["rsi_change"] > 2:
+            score += 15
+        elif row["rsi_change"] > 0:
+            score += 5
+
+        # Breakout above recent high
+        if row["close"] > row["high_20d"]:
+            score += 20
+
+        return min(score, 100)
+
+    def classify_trend_maturity(row):
+        if row["sma20"] > row["sma50"] and row["close"] < row["sma20"] * 1.03:
+            return "Early"
+        if row["sma20"] > row["sma50"] and row["close"] < row["sma20"] * 1.08:
+            return "Mid"
+        if row["close"] > row["sma20"] * 1.10:
+            return "Late"
+        return "Exhaustion"
+
+    def classify_momentum_cluster(row):
+        if row["breakout_score"] > 70 and row["volume"] > row["vol_avg20"] * 1.5:
+            return "Explosive"
+        if row["breakout_score"] > 50:
+            return "Emerging"
+        if row["rsi_change"] < 0:
+            return "Cooling"
+        if row["close"] > row["sma20"] * 1.12:
+            return "Overextended"
+        return "Reversal Watch"
+
+    def calculate_scenario_probabilities(row):
+        # Simple probabilistic model
+        continuation = 40
+        pullback = 30
+        reversal = 30
+
+        if row["breakout_score"] > 70:
+            continuation += 20
+            pullback -= 10
+
+        if row["trend_maturity"] == "Late":
+            pullback += 20
+            continuation -= 10
+
+        if row["momentum_cluster"] == "Cooling":
+            reversal += 15
+
+        # Normalize
+        total = continuation + pullback + reversal
+        return {
+            "continuation": round(100 * continuation / total),
+            "pullback": round(100 * pullback / total),
+            "reversal": round(100 * reversal / total),
+        }
+
+    def generate_narrative(row):
+        lines = []
+
+        # Breakout commentary
+        if row["breakout_score"] > 70:
+            lines.append("🔥 Strong breakout with volume confirmation.")
+        elif row["breakout_score"] > 50:
+            lines.append("📈 Breakout forming with improving momentum.")
+        else:
+            lines.append("⚠️ Weak breakout signal; limited confirmation.")
+
+        # Trend maturity
+        if row["trend_maturity"] == "Early":
+            lines.append("🟢 Trend is early and healthy.")
+        elif row["trend_maturity"] == "Mid":
+            lines.append("🔵 Trend is stable with controlled volatility.")
+        elif row["trend_maturity"] == "Late":
+            lines.append("🟡 Trend is extended; caution advised.")
+        else:
+            lines.append("🔴 Exhaustion signs present; high pullback risk.")
+
+        # Momentum cluster
+        cluster = row["momentum_cluster"]
+        if cluster == "Explosive":
+            lines.append("🚀 Momentum cluster: Explosive.")
+        elif cluster == "Emerging":
+            lines.append("✨ Momentum cluster: Emerging trend.")
+        elif cluster == "Cooling":
+            lines.append("🌥️ Momentum cluster: Cooling off.")
+        elif cluster == "Overextended":
+            lines.append("🟥 Overextended; likely pullback.")
+        else:
+            lines.append("🔻 Reversal watch conditions detected.")
+
+        return lines
+
+    # -----------------------------
+    # Main Logic
+    # -----------------------------
+
     if not historical_data.empty:
+
+        # Calculate base momentum metrics
         momentum_df = calculate_momentum_metrics(historical_data, universe)
+
         if not momentum_df.empty:
-            st.dataframe(momentum_df, use_container_width=True, hide_index=True)
+
+            # Add advanced metrics
+            momentum_df["breakout_score"] = momentum_df.apply(calculate_breakout_score, axis=1)
+            momentum_df["trend_maturity"] = momentum_df.apply(classify_trend_maturity, axis=1)
+            momentum_df["momentum_cluster"] = momentum_df.apply(classify_momentum_cluster, axis=1)
+            momentum_df["scenario"] = momentum_df.apply(calculate_scenario_probabilities, axis=1)
+            momentum_df["narrative"] = momentum_df.apply(generate_narrative, axis=1)
+
+            # Display table
+            st.dataframe(
+                momentum_df[
+                    [
+                        "ticker",
+                        "close",
+                        "sma20",
+                        "sma50",
+                        "volume",
+                        "vol_avg20",
+                        "rsi",
+                        "breakout_score",
+                        "trend_maturity",
+                        "momentum_cluster",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # Narrative section
+            st.markdown("### 📘 Signal Narratives")
+            for _, row in momentum_df.iterrows():
+                st.markdown(f"#### **{row['ticker']}**")
+                for line in row["narrative"]:
+                    st.write("• " + line)
+
+                scenario = row["scenario"]
+                st.write(
+                    f"**Next 5‑Day Outlook:** 🟢 {scenario['continuation']}% continuation | 🟡 {scenario['pullback']}% pullback | 🔴 {scenario['reversal']}% reversal"
+                )
+                st.markdown("---")
+
         else:
             st.warning("No assets matched momentum lookup thresholds.")
+
     else:
         st.error("Failed to load short-term historical metrics.")
 
