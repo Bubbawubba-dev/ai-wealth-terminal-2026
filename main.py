@@ -392,22 +392,26 @@ with tab_momentum:
                 slope_score = min(max(df["Slope"].iloc[-1] * 120, 0), 100)
                 return int((rsi_score + vol_score + slope_score) / 3)
 
-            score = momentum_pressure_score(momentum_df)
+          # Fixed indentation and removed the stray character at the end
+score = momentum_pressure_score(momentum_df)
 
-            st.markdown(
-                f"""
-                <div style="
-                    padding: 18px;
-                    border-radius: 14px;
-                    background: rgba(255,255,255,0.06);
-                    border: 1px solid rgba(255,255,255,0.12);
-                    backdrop-filter: blur(8px);
-                    margin-bottom: 12px;
-                ">
-                    <span style="font-size: 1.2rem; font-weight: 600;">
-                        🔥 Momentum Pressure: <span style="color:#00eaff;">{score}/100</span>
-                    </span>
-
+st.markdown(
+    f"""
+    <div style="
+        padding: 18px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        backdrop-filter: blur(8px);
+        margin-bottom: 12px;
+    ">
+        <span style="font-size: 1.2rem; font-weight: 600;">
+            🔥 Momentum Pressure: <span style="color:#00eaff;">{score}/100</span>
+        </span>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
 
 # TAB 2: TECHNICAL SENTIMENT — UPGRADED
 with tab_sentiment:
