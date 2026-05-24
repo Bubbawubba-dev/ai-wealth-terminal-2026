@@ -1026,6 +1026,3 @@ with tab_macro:
             except Exception as e:
                 st.caption(f"Could not build visualization for {viz_ticker}: {e}")
 
-
-
-                        
