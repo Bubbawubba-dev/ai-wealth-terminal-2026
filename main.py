@@ -357,8 +357,9 @@ def compute_factor_scores(df_history, ticker, fundamentals):
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
 
-with st.spinner("Syncing technical historical structures..."):
-    historical_data = fetch_historical_data(universe)
+@st.cache_data(ttl=1800) 
+def get_ticker_data(ticker, days=365):
+    return fetch_historical_data[ticker], days)
 
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
@@ -384,7 +385,8 @@ with tab_momentum:
 # TAB 2: TECHNICAL SENTIMENT — UPGRADED
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
-    selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
+    selected_ticker = st.selectbox("Choose ticker:", universe)
+    historical_data = get_ticker_data(selected_ticker)
 
     if not historical_data.empty:
 
