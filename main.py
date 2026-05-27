@@ -39,7 +39,7 @@ if not check_password():
 @st.cache_data(ttl=3600)
 def get_base_universe():
     return [
-        "MRAM", "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", 
+        "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA"
         "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "QUBT", "QBTS",
         "AVGO", "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS"
     ]
