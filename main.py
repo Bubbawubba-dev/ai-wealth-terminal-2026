@@ -542,7 +542,7 @@ with tab_sentiment:
         trade_state = compute_trade_state(
             selected_ticker, close, sma20, rsi_series, vol_ratio_series
         )
-            ))
+            
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(
                 x=close.index, y=close,
