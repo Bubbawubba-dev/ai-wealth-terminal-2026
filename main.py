@@ -349,6 +349,81 @@ def compute_factor_scores(df_history, ticker, fundamentals):
         return None
 
 # --- UNIFIED SIGNAL ENGINE + STRUCTURE CLASSIFIER (SYNC ALL TABS) ---
+
+def build_ai_stock_selection_table(historical_data, universe, fundamental_cache):
+    if historical_data.empty:
+        return pd.DataFrame()
+
+    available_tickers = historical_data.columns.get_level_values(0).unique()
+    macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
+
+    rows = []
+    for ticker in universe:
+        if ticker not in available_tickers:
+            continue
+
+        try:
+            df = historical_data[ticker].dropna()
+            if len(df) < 200:
+                continue
+
+            # Core engines
+            sig = unified_signal(df)
+            structure = classify_structure(sig)
+            sentiment = calculate_advanced_sentiment(historical_data, ticker)
+            factors = compute_factor_scores(historical_data, ticker, fundamental_cache.get(ticker, {}))
+
+            if sentiment.get("status") != "Active" or factors is None:
+                continue
+
+            macro_row = macro_df[macro_df["Ticker"] == ticker]
+            macro_struct = macro_row["Macro Structure"].iloc[0] if not macro_row.empty else "N/A"
+            dist_200 = macro_row["Dist. from 200D (%)"].iloc[0] if not macro_row.empty else np.nan
+            ret_6m = macro_row["6M Return (%)"].iloc[0] if not macro_row.empty else np.nan
+
+            # Components
+            sent_score = sentiment["score"]                      # 0–100
+            trend_phase = structure                              # label
+            comp_factor = factors["Composite"]                   # factor composite
+            rel_growth = factors["6M"]                           # 6M momentum
+            stability = factors["Stability"]                     # inverse vol
+
+            # Normalize some pieces
+            norm_factor = np.tanh(comp_factor / 50) * 100        # squash
+            norm_growth = np.tanh(rel_growth / 40) * 100
+            norm_stability = np.tanh(stability / 3) * 100
+
+            # Final composite (0–100)
+            final_score = (
+                0.35 * sent_score +
+                0.30 * norm_factor +
+                0.20 * norm_growth +
+                0.15 * norm_stability
+            )
+
+            rows.append({
+                "Ticker": ticker,
+                "AI Score (0–100)": round(final_score, 1),
+                "Trend Phase": trend_phase,
+                "Sentiment Score": sent_score,
+                "Factor Composite": round(comp_factor, 1),
+                "6M Momentum (%)": round(rel_growth, 1),
+                "Stability": round(stability, 2),
+                "Macro Structure": macro_struct,
+                "Dist. from 200D (%)": round(dist_200, 2) if not np.isnan(dist_200) else np.nan,
+                "6M Return (%)": round(ret_6m, 2) if not np.isnan(ret_6m) else np.nan,
+            })
+
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values("AI Score (0–100)", ascending=False)
+    return df
+
 def unified_signal(df):
     close = df["Close"]
     sma20 = close.rolling(20).mean()
@@ -400,6 +475,7 @@ def classify_structure(sig):
         return "Accumulation ⏳"
     return "Neutral / Wait ⚪"
 
+
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
@@ -410,11 +486,13 @@ with st.spinner("Syncing technical historical structures..."):
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
 
-tab_momentum, tab_sentiment, tab_macro = st.tabs([
+tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
     "⚡ Short-Term Momentum",
     "🔮 Technical Sentiment",
-    "🏛️ Macro Wealth & Long-Term Investment"
+    "🏛️ Macro Wealth & Long-Term Investment",
+    "🤖 AI Stock Selection"
 ])
+
 
 # TAB 1
 with tab_momentum:
@@ -945,6 +1023,88 @@ with tab_macro:
                     margin=dict(l=20, r=20, t=40, b=20)
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+            # TAB 4 — AI STOCK SELECTION ENGINE
+with tab_ai:
+    st.subheader("🤖 AI Stock Selection Engine")
+    st.markdown(
+        "This engine ranks assets using a composite of technical sentiment, factor scores, "
+        "macro structure, and volatility-adjusted momentum. Not advice — structural ranking only."
+    )
+
+    if historical_data.empty:
+        st.error("Engine Fault: Historical matrix unavailable for AI ranking.")
+    else:
+        with st.spinner("Calibrating multi-factor AI ranking model across universe..."):
+            ai_df = build_ai_stock_selection_table(historical_data, universe, fundamental_cache)
+
+        if ai_df.empty:
+            st.warning("No assets passed AI selection filters (data or structure insufficient).")
+        else:
+            top_n = st.slider("Show Top N Ranked Assets:", 5, min(25, len(ai_df)), 10)
+            st.dataframe(
+                ai_df.head(top_n),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown("### 🔍 Drilldown: Single Asset AI Profile")
+            pick = st.selectbox("Select asset to inspect:", ai_df["Ticker"].tolist())
+
+            row = ai_df[ai_df["Ticker"] == pick].iloc[0]
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("AI Score", f"{row['AI Score (0–100)']:.1f}")
+            with c2:
+                st.metric("Trend Phase", row["Trend Phase"])
+            with c3:
+                st.metric("Macro Structure", row["Macro Structure"])
+
+            c4, c5, c6 = st.columns(3)
+            with c4:
+                st.metric("Sentiment Score", f"{row['Sentiment Score']:.1f}")
+            with c5:
+                st.metric("Factor Composite", f"{row['Factor Composite']:.1f}")
+            with c6:
+                st.metric("6M Momentum", f"{row['6M Momentum (%)']:.1f}%")
+
+            st.markdown("### 🧠 AI Interpretation Narrative")
+
+            bullets = []
+
+            # Trend & structure
+            bullets.append(f"Trend phase is classified as **{row['Trend Phase']}**, with macro regime **{row['Macro Structure']}**.")
+            # Sentiment
+            if row["Sentiment Score"] >= 65:
+                bullets.append("Short-term sentiment is **strongly constructive**, indicating supportive momentum conditions.")
+            elif row["Sentiment Score"] >= 50:
+                bullets.append("Short-term sentiment is **balanced to positive**, with no major structural stress.")
+            else:
+                bullets.append("Short-term sentiment is **muted or cautious**, suggesting limited immediate edge.")
+            # Factors
+            if row["Factor Composite"] > 0:
+                bullets.append("Factor composite is **net positive**, reflecting supportive trend, quality, or value characteristics.")
+            else:
+                bullets.append("Factor composite is **subdued**, indicating mixed or weak factor alignment.")
+            # Momentum
+            if row["6M Momentum (%)"] > 20:
+                bullets.append("6M momentum is **strong**, consistent with a leadership or high-beta profile.")
+            elif row["6M Momentum (%)"] > 0:
+                bullets.append("6M momentum is **mildly positive**, consistent with a constructive but not explosive profile.")
+            else:
+                bullets.append("6M momentum is **flat to negative**, suggesting either early accumulation or lagging behavior.")
+            # Distance from 200D
+            dist_200 = row["Dist. from 200D (%)"]
+            if not np.isnan(dist_200):
+                if -10 <= dist_200 <= 5:
+                    bullets.append("Price is trading **near its 200D structural base**, often associated with accumulation or reload zones.")
+                elif dist_200 > 15:
+                    bullets.append("Price is trading **well above its 200D**, which may indicate extension or trim-risk territory.")
+                elif dist_200 < -10:
+                    bullets.append("Price is trading **well below its 200D**, consistent with deep value or structurally impaired regimes.")
+
+            st.write("• " + "\n• ".join(bullets))
 
             except Exception as e:
                 st.caption(f"Could not build visualization for {viz_ticker}: {e}")
