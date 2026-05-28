@@ -543,15 +543,15 @@ trade_state = compute_trade_state(
     selected_ticker, close, sma20, rsi_series, vol_ratio_series
 )
 
-            fig_price = go.Figure()
-            fig_price.add_trace(go.Scatter(
-                x=close.index, y=close,
-                name="Close", line=dict(color="#38bdf8", width=2)
-            ))
-            fig_price.add_trace(go.Scatter(
-                x=sma20.index, y=sma20,
-                name="SMA20", line=dict(color="#f59e0b", dash="dash")
-            ))
+    fig_price = go.Figure()
+    fig_price.add_trace(go.Scatter(
+        x=close.index, y=close,
+        name="Close", line=dict(color="#38bdf8", width=2)
+    ))
+    fig_price.add_trace(go.Scatter(
+        x=sma20.index, y=sma20,
+        name="SMA20", line=dict(color="#f59e0b", dash="dash")
+    ))
 
             buy_signals = []
             sell_signals = []
