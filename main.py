@@ -1025,12 +1025,12 @@ with tab_macro:
                 st.plotly_chart(fig, use_container_width=True)
 
             # TAB 4 — AI STOCK SELECTION ENGINE
-with tab_ai:
-    st.subheader("🤖 AI Stock Selection Engine")
-    st.markdown(
-        "This engine ranks assets using a composite of technical sentiment, factor scores, "
-        "macro structure, and volatility-adjusted momentum. Not advice — structural ranking only."
-    )
+            with tab_ai:
+                st.subheader("🤖 AI Stock Selection Engine")
+                st.markdown(
+                    "This engine ranks assets using a composite of technical sentiment, factor scores, "
+                    "macro structure, and volatility-adjusted momentum. Not advice — structural ranking only."
+                    )
 
     if historical_data.empty:
         st.error("Engine Fault: Historical matrix unavailable for AI ranking.")
