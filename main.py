@@ -39,9 +39,10 @@ if not check_password():
 @st.cache_data(ttl=3600)
 def get_base_universe():
     return [
-        "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", "SNOW",
-        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "BZFD", "HUT", "FLEX", "VCYT", "RDDT", "IONQ", "QUBT", "QBTS",
-        "AVGO", "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS"
+        "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", 
+        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "IONQ", "QUBT", "QBTS", "SNOW",
+        "AVGO",  "MU", "STX", "LITE", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "WYFI", "IREN", "NBIS",
+        "ENPH", "QCOM", "SMCI", "RGTI", "ASTC", "SHOP", "FJET", "NVDA", "SHAZ",
     ]
 
 @st.cache_data(ttl=1800)
@@ -119,10 +120,10 @@ def calculate_momentum_metrics(df_history, tickers):
                 np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
             )
             atr_20 = tr.rolling(20).mean().iloc[-1]
-            current_tr = tr.iloc[-1]
 
-            atr_ratio = current_tr / atr_20 if atr_20 > 0 else 1.0
-            is_breakout = atr_ratio >= 1.5
+            # --- Unified structure classification for consistency across tabs ---
+            sig = unified_signal(ticker_df)
+            structure = classify_structure(sig)
 
             rankings.append({
                 "Ticker": ticker,
@@ -130,8 +131,8 @@ def calculate_momentum_metrics(df_history, tickers):
                 "20D Return (%)": round(perf_20d, 2),
                 "Vol Velocity (x)": round(vol_velocity, 2),
                 "ATR (20)": round(atr_20, 2),
-                "TR/ATR Ratio": round(atr_ratio, 2),
-                "Explosive Flag": "🔥 BREAKOUT" if is_breakout else "Normal"
+                "TR/ATR Ratio": round(tr.iloc[-1] / atr_20 if atr_20 > 0 else 1.0, 2),
+                "Explosive Flag": structure  # synced label
             })
         except Exception:
             continue
@@ -255,14 +256,9 @@ def calculate_macro_trends(df_history, tickers, fundamental_data):
                 (current_price - close.iloc[-126]) / close.iloc[-126]
             ) * 100 if len(close) >= 126 else 0.0
 
-            if current_price > sma_50 and sma_50 > sma_200:
-                regime = "Bullish Extension 🚀"
-            elif current_price > sma_200 and sma_50 < sma_200:
-                regime = "Accumulation Phase ⏳"
-            elif current_price < sma_200 and sma_50 > sma_200:
-                regime = "Distribution/Correction ⚠️"
-            else:
-                regime = "Bear Market Cycle 📉"
+            # --- Unified structure classification instead of separate macro regime logic ---
+            sig = unified_signal(ticker_df)
+            regime = classify_structure(sig)
 
             f_metrics = fundamental_data.get(ticker, {
                 "Market Cap": "N/A",
@@ -352,6 +348,57 @@ def compute_factor_scores(df_history, ticker, fundamentals):
     except Exception:
         return None
 
+# --- UNIFIED SIGNAL ENGINE + STRUCTURE CLASSIFIER (SYNC ALL TABS) ---
+def unified_signal(df):
+    close = df["Close"]
+    sma20 = close.rolling(20).mean()
+    sma50 = close.rolling(50).mean()
+    sma200 = close.rolling(200).mean()
+
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+
+    high = df["High"]
+    low = df["Low"]
+    tr = np.maximum(
+        (high - low),
+        np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
+    )
+    atr20 = tr.rolling(20).mean()
+    atr5 = tr.rolling(5).mean()
+    vol_ratio = atr5 / atr20
+
+    return {
+        "price": float(close.iloc[-1]),
+        "sma20": float(sma20.iloc[-1]),
+        "sma50": float(sma50.iloc[-1]),
+        "sma200": float(sma200.iloc[-1]),
+        "rsi": float(rsi.iloc[-1]),
+        "vol_ratio": float(vol_ratio.iloc[-1])
+    }
+
+def classify_structure(sig):
+    price = sig["price"]
+    sma20 = sig["sma20"]
+    sma50 = sig["sma50"]
+    sma200 = sig["sma200"]
+    rsi = sig["rsi"]
+    vol = sig["vol_ratio"]
+
+    breakout = (price > sma20 and rsi > 55 and vol > 1.1)
+    mid_trend = price > sma50
+    long_trend = price > sma200
+
+    if breakout:
+        return "Short-Term Breakout 🚀"
+    if mid_trend and long_trend:
+        return "Healthy Uptrend 📈"
+    if long_trend:
+        return "Accumulation ⏳"
+    return "Neutral / Wait ⚪"
 
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
@@ -388,12 +435,10 @@ with tab_sentiment:
 
     if not historical_data.empty:
 
-        # --- TICKER SENTIMENT ---
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
         if sentiment["status"] == "Active":
 
-            # --- METRICS ROW ---
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
@@ -402,7 +447,6 @@ with tab_sentiment:
             with col3:
                 st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
 
-            # --- SENTIMENT GAUGE ---
             gauge_fig = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=sentiment["score"],
@@ -421,24 +465,20 @@ with tab_sentiment:
             ))
             st.plotly_chart(gauge_fig, use_container_width=True)
 
-            # --- LOAD PRICE DATA ---
             ticker_df = historical_data[selected_ticker].dropna()
             close = ticker_df["Close"]
             high = ticker_df["High"]
             low = ticker_df["Low"]
             volume = ticker_df.get("Volume", None)
 
-            # --- CALCULATE RSI ---
             delta = close.diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
             rs = gain / loss
             rsi_series = 100 - (100 / (1 + rs))
 
-            # --- SMA20 ---
             sma20 = close.rolling(20).mean()
 
-            # --- VOLATILITY RATIO ---
             tr = np.maximum(
                 (high - low),
                 np.maximum(abs(high - close.shift(1)),
@@ -448,7 +488,6 @@ with tab_sentiment:
             atr20 = tr.rolling(20).mean()
             vol_ratio_series = atr5 / atr20
 
-            # --- PRICE CHART WITH SIGNAL ARROWS ---
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(
                 x=close.index, y=close,
@@ -463,7 +502,6 @@ with tab_sentiment:
             sell_signals = []
 
             for i in range(1, len(close)):
-                # BUY
                 if (
                     close.iloc[i] > sma20.iloc[i] and
                     close.iloc[i-1] <= sma20.iloc[i-1] and
@@ -472,7 +510,6 @@ with tab_sentiment:
                 ):
                     buy_signals.append((close.index[i], close.iloc[i]))
 
-                # SELL
                 if (
                     (close.iloc[i] < sma20.iloc[i] and
                      close.iloc[i-1] >= sma20.iloc[i-1]) or
@@ -500,7 +537,6 @@ with tab_sentiment:
             )
             st.plotly_chart(fig_price, use_container_width=True)
 
-            # --- SENTIMENT VISUALIZATION ENGINE ---
             st.markdown("### Sentiment Structure Visualization")
 
             try:
@@ -549,7 +585,6 @@ with tab_sentiment:
             except Exception as e:
                 st.error(f"Visualization Engine Fault: {e}")
 
-            # --- BACKTEST ENGINE + HOLD LENGTH ---
             st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
             returns = []
@@ -560,7 +595,6 @@ with tab_sentiment:
 
             for i in range(1, len(close)):
 
-                # ENTRY
                 if (
                     position is None and
                     close.iloc[i] > sma20.iloc[i] and
@@ -571,7 +605,6 @@ with tab_sentiment:
                     entry_price = close.iloc[i]
                     entry_index = i
 
-                # EXIT
                 elif (
                     position == "LONG" and (
                         close.iloc[i] < sma20.iloc[i] or
@@ -605,7 +638,6 @@ with tab_sentiment:
             else:
                 st.info("Not enough signals to compute backtest.")
 
-            # --- GROWTH PROJECTION (PATTERN-BASED) ---
             st.markdown("### 📊 Pattern-Based Growth Projection")
 
             if returns:
@@ -624,7 +656,6 @@ with tab_sentiment:
             else:
                 st.caption("Projection unavailable: insufficient historical signal data.")
 
-            # --- TREND PHASE + SCENARIO MAP ---
             st.markdown("### 🧭 Trend Phase & Scenario Map")
 
             latest_rsi = float(rsi_series.iloc[-1]) if not np.isnan(rsi_series.iloc[-1]) else 50
@@ -632,18 +663,10 @@ with tab_sentiment:
             latest_price = float(close.iloc[-1])
             latest_sma20 = float(sma20.iloc[-1])
 
-            if latest_rsi < 55 and latest_price > latest_sma20:
-                trend_phase = "Early Trend"
-            elif 55 <= latest_rsi <= 70:
-                trend_phase = "Mid Trend"
-            elif latest_rsi > 70 and latest_vol < 1.2:
-                trend_phase = "Late Trend"
-            elif latest_rsi > 70 and latest_vol >= 1.2:
-                trend_phase = "Exhaustion Risk"
-            else:
-                trend_phase = "Indecisive / Transition"
+            # --- Use unified structure classification here ---
+            sig = unified_signal(ticker_df)
+            trend_phase = classify_structure(sig)
 
-            # Simple scenario probabilities (heuristic, non-advisory)
             cont_prob = (
                 0.4 * (sentiment["metrics"]["rsi_14"] / 100) +
                 0.4 * (max(0, sentiment["metrics"]["ma_deviation_pct"]) / 20) +
@@ -663,7 +686,6 @@ with tab_sentiment:
             with c4:
                 st.metric("Pullback Scenario", f"{pullback_prob*100:.1f}%")
 
-            # --- MARKET SENTIMENT VS TICKER SENTIMENT ---
             st.markdown("### 🌐 Market vs Ticker Sentiment")
 
             market_scores = []
@@ -687,10 +709,8 @@ with tab_sentiment:
             else:
                 st.caption("Market sentiment benchmark unavailable (insufficient data).")
 
-            # --- SIGNAL QUALITY & STORYLINE ---
             st.markdown("### 🧠 Signal Quality & Narrative")
 
-            # Simple signal quality heuristic
             quality_components = []
 
             if latest_price > latest_sma20:
@@ -706,7 +726,6 @@ with tab_sentiment:
 
             st.metric("Signal Quality Score", f"{signal_quality:.1f}/100")
 
-            # Narrative
             narrative_lines = []
 
             if latest_price > latest_sma20:
@@ -743,7 +762,6 @@ with tab_sentiment:
         else:
             st.error(f"Engine Fault: {sentiment['error']}")
 
-
 # TAB 3 — LONG‑TERM MACRO + ENTRY/EXIT ENGINE
 with tab_macro:
     st.subheader("🏛️ Institutional Macro Structural & Fundamental Scanner")
@@ -753,45 +771,40 @@ with tab_macro:
         st.error("Engine Fault: Macro framework history inaccessible.")
     else:
 
-        # --- BUILD MACRO TABLE ---
         macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
 
         if macro_df.empty:
             st.warning("Insufficient structural pricing matrix for 200-day horizons.")
         else:
 
-            # --- LONG-TERM ENTRY / EXIT LOGIC ---
             def classify_entry_exit(row):
                 dist = row["Dist. from 200D (%)"]
                 ret_6m = row["6M Return (%)"]
                 regime = row["Macro Structure"]
 
-                # ENTRY ZONE (accumulation bias)
-                if regime in ["Bullish Extension 🚀", "Accumulation Phase ⏳"] and -12 <= dist <= +5:
+                if regime in ["Short-Term Breakout 🚀", "Healthy Uptrend 📈", "Accumulation ⏳"] and -12 <= dist <= +5:
                     entry = "🟢 Accumulation Zone (Near 200D Support)"
-                elif regime == "Accumulation Phase ⏳" and dist < -12:
+                elif regime == "Accumulation ⏳" and dist < -12:
                     entry = "🟡 Deep Value Accumulation (High Patience)"
-                elif "Bear" in regime:
-                    entry = "🔻 Avoid New Long-Term Entries (Bear Structure)"
-                else:
+                elif "Neutral" in regime:
                     entry = "⚪ Neutral / Wait for Better Structure"
+                else:
+                    entry = "🔻 Avoid New Long-Term Entries (Bear / Weak Structure)"
 
-                # EXIT / TRIM RISK
-                if regime == "Bullish Extension 🚀" and dist > 20 and ret_6m > 30:
+                if "Short-Term Breakout" in regime and dist > 20 and ret_6m > 30:
                     exit_zone = "🟥 Elevated Trim / Rebalance Risk"
                 elif dist > 15 and ret_6m > 20:
                     exit_zone = "🟠 Watch for Exhaustion / Tighten Risk"
-                elif dist < -15 and "Bear" in regime:
+                elif dist < -15 and "Neutral" not in regime and "Accumulation" not in regime:
                     exit_zone = "🔻 Capital Preservation Focus"
                 else:
                     exit_zone = "🟢 Hold / No Structural Exit Signal"
 
-                # HOLDING BIAS
                 if "Accu" in entry:
                     bias = "Long-Term Accumulation Bias"
                 elif "Trim" in exit_zone or "Exhaustion" in exit_zone:
                     bias = "Hold / Trim on Strength"
-                elif "Bear" in regime:
+                elif "Avoid" in entry or "Capital" in exit_zone:
                     bias = "Defensive / Underweight Bias"
                 else:
                     bias = "Core Hold / Monitor"
@@ -806,7 +819,6 @@ with tab_macro:
                 classify_entry_exit, axis=1
             )
 
-            # --- LONG-TERM ENTRY WATCHLIST ---
             st.markdown("## 🟢 Long-Term Entry Watchlist (Top Accumulation Candidates)")
 
             entry_candidates = macro_df[
@@ -833,7 +845,6 @@ with tab_macro:
 
             st.divider()
 
-            # --- TRIM RISK RADAR (TABULATED) ---
             st.markdown("## 🟥 Trim Risk Radar — Extended / Overstretched Structures")
 
             trim_risk = macro_df[
@@ -869,7 +880,6 @@ with tab_macro:
 
             st.divider()
 
-            # --- FILTERS ---
             f_col1, f_col2 = st.columns(2)
             with f_col1:
                 regimes = ["All"] + list(macro_df["Macro Structure"].unique())
@@ -892,7 +902,6 @@ with tab_macro:
             else:
                 filtered_df = filtered_df.sort_values("Dist. from 200D (%)")
 
-            # --- DISPLAY TABLE ---
             st.dataframe(
                 filtered_df[
                     [
@@ -913,7 +922,6 @@ with tab_macro:
                 hide_index=True
             )
 
-            # --- VISUALIZATION ---
             st.subheader("Macro Trend Construction Visualization")
             viz_ticker = st.selectbox(
                 "Select Asset for Multi-Month Visual Inspection:",
@@ -940,7 +948,3 @@ with tab_macro:
 
             except Exception as e:
                 st.caption(f"Could not build visualization for {viz_ticker}: {e}")
-
-
-
-                        
