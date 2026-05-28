@@ -489,59 +489,59 @@ with tab_sentiment:
             vol_ratio_series = atr5 / atr20
 
             # === ENTRY / EXIT / HOLD PERIOD ENGINE (NEW) ===
-import datetime
+            import datetime
 
-def compute_trade_state(symbol, close, sma20, rsi, vol_ratio):
-    today = datetime.date.today()
-    price = float(close.iloc[-1])
-    sma = float(sma20.iloc[-1])
-    rsi_val = float(rsi.iloc[-1])
-    vol_val = float(vol_ratio.iloc[-1])
+            def compute_trade_state(symbol, close, sma20, rsi, vol_ratio):
+                today = datetime.date.today()
+                price = float(close.iloc[-1])
+                sma = float(sma20.iloc[-1])
+                rsi_val = float(rsi.iloc[-1])
+                vol_val = float(vol_ratio.iloc[-1])
 
-    # --- ENTRY CONDITION ---
-    entry_signal = price > sma and rsi_val > 50 and vol_val > 1.0
+            # --- ENTRY CONDITION ---
+            entry_signal = price > sma and rsi_val > 50 and vol_val > 1.0
 
-    # --- INITIALIZE ENTRY ---
-    if entry_signal:
-        if f"{symbol}_entry_price" not in st.session_state:
-            st.session_state[f"{symbol}_entry_price"] = price
-            st.session_state[f"{symbol}_entry_date"] = today
+            # --- INITIALIZE ENTRY ---
+            if entry_signal:
+                if f"{symbol}_entry_price" not in st.session_state:
+                    st.session_state[f"{symbol}_entry_price"] = price
+                    st.session_state[f"{symbol}_entry_date"] = today
 
-        entry_price = st.session_state[f"{symbol}_entry_price"]
-        entry_date = st.session_state[f"{symbol}_entry_date"]
-        hold_days = (today - entry_date).days
-    else:
-        entry_price = None
-        hold_days = 0
+                entry_price = st.session_state[f"{symbol}_entry_price"]
+                entry_date = st.session_state[f"{symbol}_entry_date"]
+                hold_days = (today - entry_date).days
+            else:
+                entry_price = None
+                hold_days = 0
 
-    # --- EXIT CONDITION ---
-    exit_signal = price < sma or rsi_val < 45 or vol_val < 0.8
+            # --- EXIT CONDITION ---
+            exit_signal = price < sma or rsi_val < 45 or vol_val < 0.8
 
-    if exit_signal and f"{symbol}_entry_price" in st.session_state:
-        exit_price = price
-        status = "EXIT"
+            if exit_signal and f"{symbol}_entry_price" in st.session_state:
+                exit_price = price
+                status = "EXIT"
 
-        # Optional: auto‑reset entry state
-        st.session_state.pop(f"{symbol}_entry_price", None)
-        st.session_state.pop(f"{symbol}_entry_date", None)
+                # Optional: auto‑reset entry state
+                st.session_state.pop(f"{symbol}_entry_price", None)
+                st.session_state.pop(f"{symbol}_entry_date", None)
 
-    elif entry_signal:
-        exit_price = None
-        status = "HOLD"
-    else:
-        exit_price = None
-        status = "WATCH"
+            elif entry_signal:
+                exit_price = None
+                status = "HOLD"
+            else:
+                exit_price = None
+                status = "WATCH"
 
-    return {
-        "Entry Price": entry_price,
-        "Exit Price": exit_price,
-        "Hold Days": hold_days,
-        "Status": status
-    }
+            return {
+                "Entry Price": entry_price,
+                "Exit Price": exit_price,
+                "Hold Days": hold_days,
+                "Status": status
+            }
 
-trade_state = compute_trade_state(
-    selected_ticker, close, sma20, rsi_series, vol_ratio_series
-)
+        trade_state = compute_trade_state(
+            selected_ticker, close, sma20, rsi_series, vol_ratio_series
+        )
 
     fig_price = go.Figure()
     fig_price.add_trace(go.Scatter(
