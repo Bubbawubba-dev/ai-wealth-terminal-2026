@@ -413,7 +413,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
 tab_momentum, tab_sentiment, tab_macro = st.tabs([
     "⚡ Short-Term Momentum",
     "🔮 Technical Sentiment",
-    "🏛️ Macro Wealth & Long-Term Investment"
+    "🏛️ Macro Wealth & Long-Term Investment",
     "Ai Stock Selection Engine"
 ])
 
