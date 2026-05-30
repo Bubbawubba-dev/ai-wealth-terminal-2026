@@ -428,7 +428,141 @@ with tab_momentum:
     else:
         st.error("Failed to load short-term historical metrics.")
 
-# TAB 2: TECHNICAL SENTIMENT — UPGRADED
+# TAB 2: TECHNICAL SENTIMENT — UPGRADED v13.0
+def compute_signal_quality_and_narrative(
+    close,
+    sma20,
+    rsi_series,
+    vol_ratio_series,
+    returns,
+    win_rate,
+    avg_return,
+    trend_phase
+):
+    latest_price = float(close.iloc[-1])
+    latest_sma20 = float(sma20.iloc[-1])
+    latest_rsi = float(rsi_series.iloc[-1]) if not np.isnan(rsi_series.iloc[-1]) else 50.0
+    latest_vol = float(vol_ratio_series.iloc[-1]) if not np.isnan(vol_ratio_series.iloc[-1]) else 1.0
+
+    # --- Trend Score (0–100): price vs SMA20 ---
+    if latest_sma20 > 0:
+        dist_sma20_pct = (latest_price - latest_sma20) / latest_sma20 * 100
+    else:
+        dist_sma20_pct = 0.0
+
+    trend_score = float(np.interp(
+        dist_sma20_pct,
+        [-5, 0, 5, 10],
+        [0, 40, 70, 100]
+    ))
+
+    # --- Momentum Score (0–100): RSI ---
+    momentum_score = float(np.interp(
+        latest_rsi,
+        [30, 45, 55, 70],
+        [0, 40, 70, 100]
+    ))
+
+    # --- Volatility Score (0–100): ATR5/ATR20 ratio ---
+    vol_score = float(np.interp(
+        latest_vol,
+        [0.6, 0.9, 1.1, 1.6],
+        [20, 80, 60, 20]
+    ))
+
+    # --- Backtest Score (0–100): win rate + avg return ---
+    if returns:
+        win_component = float(np.interp(
+            win_rate,
+            [30, 50, 70],
+            [20, 60, 100]
+        ))
+        ret_component = float(np.interp(
+            avg_return,
+            [-2, 0, 2],
+            [20, 60, 100]
+        ))
+        backtest_score = win_component * 0.6 + ret_component * 0.4
+    else:
+        backtest_score = 50.0
+
+    # --- Structure Score (0–100): based on trend phase label ---
+    if trend_phase == "Short-Term Breakout 🚀":
+        structure_score = 100.0
+    elif trend_phase == "Healthy Uptrend 📈":
+        structure_score = 80.0
+    elif trend_phase == "Accumulation ⏳":
+        structure_score = 60.0
+    else:
+        structure_score = 40.0
+
+    # --- Final weighted signal quality ---
+    signal_quality = (
+        trend_score * 0.30 +
+        momentum_score * 0.25 +
+        vol_score * 0.20 +
+        backtest_score * 0.15 +
+        structure_score * 0.10
+    )
+    signal_quality = round(float(signal_quality), 1)
+
+    # --- Narrative blocks ---
+    narrative_lines = []
+
+    # Trend narrative
+    if trend_score >= 75:
+        narrative_lines.append("Price is advancing above its short-term trend base with strong directional alignment.")
+    elif trend_score >= 50:
+        narrative_lines.append("Price is hovering near its short-term trend base, with a developing directional bias.")
+    else:
+        narrative_lines.append("Price is trading below key short-term trend levels, signaling caution.")
+
+    # Momentum narrative
+    if momentum_score >= 75:
+        narrative_lines.append("RSI reflects firm bullish momentum with strong buying pressure.")
+    elif momentum_score >= 50:
+        narrative_lines.append("Momentum is balanced, with neither buyers nor sellers in clear control.")
+    else:
+        narrative_lines.append("RSI indicates fading momentum and a weaker demand profile.")
+
+    # Volatility narrative
+    if latest_vol > 1.2:
+        narrative_lines.append("Volatility is expanding, increasing the probability of sharp swings and breakout-type moves.")
+    elif latest_vol < 0.9:
+        narrative_lines.append("Volatility is compressed, often preceding future expansion phases.")
+    else:
+        narrative_lines.append("Volatility is operating within a normal regime for this asset.")
+
+    # Backtest narrative
+    if returns:
+        if win_rate > 60 and avg_return > 0:
+            narrative_lines.append("Historical signals show a favorable skew with a positive average trade outcome.")
+        elif win_rate > 50:
+            narrative_lines.append("Historical signals show a modest positive edge, but with mixed outcomes.")
+        else:
+            narrative_lines.append("Historical signals do not yet demonstrate a strong or persistent edge.")
+    else:
+        narrative_lines.append("Insufficient historical signal data to characterize backtested trade outcomes.")
+
+    # Structure narrative
+    if trend_phase == "Short-Term Breakout 🚀":
+        narrative_lines.append("Structural regime aligns with a short-term breakout phase, favoring momentum continuation setups.")
+    elif trend_phase == "Healthy Uptrend 📈":
+        narrative_lines.append("Structural regime confirms a healthy multi-timeframe uptrend, supportive of trend-following strategies.")
+    elif trend_phase == "Accumulation ⏳":
+        narrative_lines.append("Structural regime suggests accumulation behavior, often preceding more decisive trend moves.")
+    else:
+        narrative_lines.append("Structural regime is neutral, with no strong directional bias confirmed.")
+
+    return signal_quality, narrative_lines, {
+        "trend_score": round(trend_score, 1),
+        "momentum_score": round(momentum_score, 1),
+        "vol_score": round(vol_score, 1),
+        "backtest_score": round(backtest_score, 1),
+        "structure_score": round(structure_score, 1),
+    }
+
+
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
@@ -620,12 +754,12 @@ with tab_sentiment:
                     entry_price = None
                     entry_index = None
 
-            if returns:
-                avg_return = np.mean(returns) * 100
-                win_rate = (np.sum(np.array(returns) > 0) / len(returns)) * 100
-                avg_length = np.mean(trade_lengths) if trade_lengths else 0
-                median_length = np.median(trade_lengths) if trade_lengths else 0
+            avg_return = np.mean(returns) * 100 if returns else 0.0
+            win_rate = (np.sum(np.array(returns) > 0) / len(returns)) * 100 if returns else 0.0
+            avg_length = np.mean(trade_lengths) if trade_lengths else 0
+            median_length = np.median(trade_lengths) if trade_lengths else 0
 
+            if returns:
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     st.metric("Avg Trade Return", f"{avg_return:.2f}%")
@@ -658,12 +792,6 @@ with tab_sentiment:
 
             st.markdown("### 🧭 Trend Phase & Scenario Map")
 
-            latest_rsi = float(rsi_series.iloc[-1]) if not np.isnan(rsi_series.iloc[-1]) else 50
-            latest_vol = float(vol_ratio_series.iloc[-1]) if not np.isnan(vol_ratio_series.iloc[-1]) else 1.0
-            latest_price = float(close.iloc[-1])
-            latest_sma20 = float(sma20.iloc[-1])
-
-            # --- Use unified structure classification here ---
             sig = unified_signal(ticker_df)
             trend_phase = classify_structure(sig)
 
@@ -673,6 +801,7 @@ with tab_sentiment:
                 0.2 * min(1.5, sentiment["metrics"]["volatility_ratio"]) / 1.5
             )
             cont_prob = float(min(1, max(0, cont_prob)))
+            latest_vol = float(vol_ratio_series.iloc[-1]) if not np.isnan(vol_ratio_series.iloc[-1]) else 1.0
             pullback_prob = float(min(0.6, max(0, latest_vol - 1)))
             sideway_prob = float(max(0, 1 - cont_prob - pullback_prob))
 
@@ -709,53 +838,31 @@ with tab_sentiment:
             else:
                 st.caption("Market sentiment benchmark unavailable (insufficient data).")
 
-            st.markdown("### 🧠 Signal Quality & Narrative")
+            # --- NEW v13.0 SIGNAL QUALITY ENGINE ---
+            st.markdown("### 🧠 Signal Quality & Narrative (v13.0)")
 
-            quality_components = []
+            signal_quality, narrative_lines, factor_scores = compute_signal_quality_and_narrative(
+                close=close,
+                sma20=sma20,
+                rsi_series=rsi_series,
+                vol_ratio_series=vol_ratio_series,
+                returns=returns,
+                win_rate=win_rate,
+                avg_return=avg_return,
+                trend_phase=trend_phase
+            )
 
-            if latest_price > latest_sma20:
-                quality_components.append(1)
-            if 50 <= latest_rsi <= 70:
-                quality_components.append(1)
-            if 0.8 <= latest_vol <= 1.3:
-                quality_components.append(1)
-            if returns and win_rate > 50:
-                quality_components.append(1)
-
-            signal_quality = (sum(quality_components) / 4) * 100 if quality_components else 0
-
-            st.metric("Signal Quality Score", f"{signal_quality:.1f}/100")
-
-            narrative_lines = []
-
-            if latest_price > latest_sma20:
-                narrative_lines.append("Price is holding above its short-term trend base (SMA20).")
-            else:
-                narrative_lines.append("Price is trading below its short-term trend base (SMA20).")
-
-            if latest_rsi < 45:
-                narrative_lines.append("Momentum is weak, with RSI in a lower band.")
-            elif 45 <= latest_rsi <= 60:
-                narrative_lines.append("Momentum is balanced, with RSI in a neutral-to-positive zone.")
-            elif 60 < latest_rsi <= 70:
-                narrative_lines.append("Momentum is strong, with RSI in a bullish band.")
-            else:
-                narrative_lines.append("Momentum is elevated, suggesting a mature or extended move.")
-
-            if latest_vol > 1.2:
-                narrative_lines.append("Volatility is elevated, increasing the risk of sharp swings.")
-            elif latest_vol < 0.9:
-                narrative_lines.append("Volatility is compressed, often preceding expansion phases.")
-            else:
-                narrative_lines.append("Volatility is within a normal operating range.")
-
-            if returns:
-                if win_rate > 55:
-                    narrative_lines.append("Historical pattern shows a favorable skew of winning trades.")
-                else:
-                    narrative_lines.append("Historical pattern shows mixed outcomes with no strong edge.")
-            else:
-                narrative_lines.append("Insufficient historical signal data to characterize trade outcomes.")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            with c1:
+                st.metric("Signal Quality", f"{signal_quality:.1f}/100")
+            with c2:
+                st.metric("Trend Score", f"{factor_scores['trend_score']:.1f}")
+            with c3:
+                st.metric("Momentum Score", f"{factor_scores['momentum_score']:.1f}")
+            with c4:
+                st.metric("Volatility Score", f"{factor_scores['vol_score']:.1f}")
+            with c5:
+                st.metric("Backtest Score", f"{factor_scores['backtest_score']:.1f}")
 
             st.write("• " + "\n• ".join(narrative_lines))
 
