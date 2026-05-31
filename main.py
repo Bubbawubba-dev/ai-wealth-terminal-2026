@@ -39,9 +39,9 @@ if not check_password():
 @st.cache_data(ttl=3600)
 def get_base_universe():
     return [
-        "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", "DPRO", "UMAC",
-        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "QUBT", "QBTS", "SNOW", "HIVE", "ONDS", "F",
-        "AVGO", "MU", "STX", "QCOM", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "ONDS", "IREN", "NBIS",
+        "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", "DPRO", "UMAC", 
+        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "QUBT", "QBTS", "SNOW", "HIVE", "ONDS", "F", 
+        "AVGO",  "MU", "STX", "QCOM", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "ONDS", "IREN", "NBIS",
         "ENPH", "QCOM", "SMCI", "RGTI", "ASTC", "SHOP", "FJET", "NVDA", "SHAZ", "WOLF", "AVAV", "RCAT", "KTOS", "BA",
     ]
 
@@ -121,6 +121,7 @@ def calculate_momentum_metrics(df_history, tickers):
             )
             atr_20 = tr.rolling(20).mean().iloc[-1]
 
+            # --- Unified structure classification for consistency across tabs ---
             sig = unified_signal(ticker_df)
             structure = classify_structure(sig)
 
@@ -131,7 +132,7 @@ def calculate_momentum_metrics(df_history, tickers):
                 "Vol Velocity (x)": round(vol_velocity, 2),
                 "ATR (20)": round(atr_20, 2),
                 "TR/ATR Ratio": round(tr.iloc[-1] / atr_20 if atr_20 > 0 else 1.0, 2),
-                "Explosive Flag": structure
+                "Explosive Flag": structure  # synced label
             })
         except Exception:
             continue
@@ -255,6 +256,7 @@ def calculate_macro_trends(df_history, tickers, fundamental_data):
                 (current_price - close.iloc[-126]) / close.iloc[-126]
             ) * 100 if len(close) >= 126 else 0.0
 
+            # --- Unified structure classification instead of separate macro regime logic ---
             sig = unified_signal(ticker_df)
             regime = classify_structure(sig)
 
@@ -285,10 +287,12 @@ def compute_factor_scores(df_history, ticker, fundamentals):
         df = df_history[ticker].dropna()
         close = df["Close"]
 
+        # Momentum factors
         ret_1m = (close.iloc[-1] - close.iloc[-21]) / close.iloc[-21] * 100 if len(close) > 21 else 0
         ret_3m = (close.iloc[-1] - close.iloc[-63]) / close.iloc[-63] * 100 if len(close) > 63 else 0
         ret_6m = (close.iloc[-1] - close.iloc[-126]) / close.iloc[-126] * 100 if len(close) > 126 else 0
 
+        # Trend factors
         sma50 = close.rolling(50).mean().iloc[-1]
         sma200 = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else sma50
         trend_strength = (
@@ -298,6 +302,7 @@ def compute_factor_scores(df_history, ticker, fundamentals):
             -3
         )
 
+        # Volatility
         high = df["High"]
         low = df["Low"]
         tr = np.maximum(
@@ -308,6 +313,7 @@ def compute_factor_scores(df_history, ticker, fundamentals):
         volatility = atr20 / close.iloc[-1]
         stability = 1 / volatility if volatility > 0 else 0
 
+        # Fundamentals
         pe = fundamentals.get("P/E Ratio", "N/A")
         margin = fundamentals.get("Profit Margin", "N/A")
         margin_val = float(margin.replace("%", "")) if margin != "N/A" else 0
@@ -317,6 +323,7 @@ def compute_factor_scores(df_history, ticker, fundamentals):
         value = 1 / pe_val if pe_val > 0 else 0
         growth = ret_6m
 
+        # Composite score
         composite = (
             (ret_3m * 0.25) +
             (trend_strength * 10 * 0.25) +
@@ -341,7 +348,7 @@ def compute_factor_scores(df_history, ticker, fundamentals):
     except Exception:
         return None
 
-# --- UNIFIED SIGNAL ENGINE + STRUCTURE CLASSIFIER ---
+# --- UNIFIED SIGNAL ENGINE + STRUCTURE CLASSIFIER (SYNC ALL TABS) ---
 def unified_signal(df):
     close = df["Close"]
     sma20 = close.rolling(20).mean()
@@ -393,69 +400,6 @@ def classify_structure(sig):
         return "Accumulation ⏳"
     return "Neutral / Wait ⚪"
 
-# --- AI ENGINE FOR TAB 4 ---
-def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
-    rows = []
-    if df_history.empty:
-        return pd.DataFrame()
-
-    available = df_history.columns.get_level_values(0).unique()
-
-    for ticker in universe:
-        if ticker not in available:
-            continue
-
-        try:
-            df = df_history[ticker].dropna()
-            if len(df) < 80:
-                continue
-
-            sig = unified_signal(df)
-            structure = classify_structure(sig)
-
-            sentiment = calculate_advanced_sentiment(df_history, ticker)
-            sent_score = sentiment.get("score", 50)
-
-            fundamentals = fundamental_cache.get(ticker, {
-                "Market Cap": "N/A",
-                "P/E Ratio": "N/A",
-                "Profit Margin": "N/A"
-            })
-            factor = compute_factor_scores(df_history, ticker, fundamentals)
-            if factor is None:
-                continue
-
-            ai_score = (
-                sent_score * 0.35 +
-                factor["3M"] * 0.25 +
-                factor["Stability"] * 10 * 0.20 +
-                factor["Quality"] * 0.10 +
-                factor["Value"] * 100 * 0.10
-            )
-            ai_score = float(np.clip(ai_score, 0, 100))
-
-            rows.append({
-                "Ticker": ticker,
-                "Price": round(df["Close"].iloc[-1], 2),
-                "AI Score": round(ai_score, 1),
-                "Sentiment Score": sent_score,
-                "3M Return (%)": round(factor["3M"], 2),
-                "Stability": round(factor["Stability"], 2),
-                "Quality": round(factor["Quality"], 2),
-                "Value": round(factor["Value"], 4),
-                "Structure": structure,
-                "Market Cap": fundamentals["Market Cap"],
-                "P/E Ratio": fundamentals["P/E Ratio"],
-                "Profit Margin": fundamentals["Profit Margin"],
-            })
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    return pd.DataFrame(rows).sort_values(by="AI Score", ascending=False).reset_index(drop=True)
-
 # --- 4. USER INTERFACE PLATFORM ---
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
@@ -466,14 +410,13 @@ with st.spinner("Syncing technical historical structures..."):
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
 
-tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
+tab_momentum, tab_sentiment, tab_macro = st.tabs([
     "⚡ Short-Term Momentum",
     "🔮 Technical Sentiment",
-    "🏛️ Macro Wealth & Long-Term Investment",
-    "🤖 AI Stock Selection Engine"
+    "🏛️ Macro Wealth & Long-Term Investment"
 ])
 
-# --- TAB 1: SHORT-TERM MOMENTUM ---
+# TAB 1
 with tab_momentum:
     st.subheader("Explosive Short-Term Breakout Scanner")
     if not historical_data.empty:
@@ -485,7 +428,7 @@ with tab_momentum:
     else:
         st.error("Failed to load short-term historical metrics.")
 
-# --- TAB 2: TECHNICAL SENTIMENT ---
+# TAB 2: TECHNICAL SENTIMENT — UPGRADED v13.0
 def compute_signal_quality_and_narrative(
     close,
     sma20,
@@ -501,6 +444,7 @@ def compute_signal_quality_and_narrative(
     latest_rsi = float(rsi_series.iloc[-1]) if not np.isnan(rsi_series.iloc[-1]) else 50.0
     latest_vol = float(vol_ratio_series.iloc[-1]) if not np.isnan(vol_ratio_series.iloc[-1]) else 1.0
 
+    # --- Trend Score (0–100): price vs SMA20 ---
     if latest_sma20 > 0:
         dist_sma20_pct = (latest_price - latest_sma20) / latest_sma20 * 100
     else:
@@ -512,18 +456,21 @@ def compute_signal_quality_and_narrative(
         [0, 40, 70, 100]
     ))
 
+    # --- Momentum Score (0–100): RSI ---
     momentum_score = float(np.interp(
         latest_rsi,
         [30, 45, 55, 70],
         [0, 40, 70, 100]
     ))
 
+    # --- Volatility Score (0–100): ATR5/ATR20 ratio ---
     vol_score = float(np.interp(
         latest_vol,
         [0.6, 0.9, 1.1, 1.6],
         [20, 80, 60, 20]
     ))
 
+    # --- Backtest Score (0–100): win rate + avg return ---
     if returns:
         win_component = float(np.interp(
             win_rate,
@@ -539,6 +486,7 @@ def compute_signal_quality_and_narrative(
     else:
         backtest_score = 50.0
 
+    # --- Structure Score (0–100): based on trend phase label ---
     if trend_phase == "Short-Term Breakout 🚀":
         structure_score = 100.0
     elif trend_phase == "Healthy Uptrend 📈":
@@ -548,6 +496,7 @@ def compute_signal_quality_and_narrative(
     else:
         structure_score = 40.0
 
+    # --- Final weighted signal quality ---
     signal_quality = (
         trend_score * 0.30 +
         momentum_score * 0.25 +
@@ -557,8 +506,10 @@ def compute_signal_quality_and_narrative(
     )
     signal_quality = round(float(signal_quality), 1)
 
+    # --- Narrative blocks ---
     narrative_lines = []
 
+    # Trend narrative
     if trend_score >= 75:
         narrative_lines.append("Price is advancing above its short-term trend base with strong directional alignment.")
     elif trend_score >= 50:
@@ -566,6 +517,7 @@ def compute_signal_quality_and_narrative(
     else:
         narrative_lines.append("Price is trading below key short-term trend levels, signaling caution.")
 
+    # Momentum narrative
     if momentum_score >= 75:
         narrative_lines.append("RSI reflects firm bullish momentum with strong buying pressure.")
     elif momentum_score >= 50:
@@ -573,6 +525,7 @@ def compute_signal_quality_and_narrative(
     else:
         narrative_lines.append("RSI indicates fading momentum and a weaker demand profile.")
 
+    # Volatility narrative
     if latest_vol > 1.2:
         narrative_lines.append("Volatility is expanding, increasing the probability of sharp swings and breakout-type moves.")
     elif latest_vol < 0.9:
@@ -580,6 +533,7 @@ def compute_signal_quality_and_narrative(
     else:
         narrative_lines.append("Volatility is operating within a normal regime for this asset.")
 
+    # Backtest narrative
     if returns:
         if win_rate > 60 and avg_return > 0:
             narrative_lines.append("Historical signals show a favorable skew with a positive average trade outcome.")
@@ -590,6 +544,7 @@ def compute_signal_quality_and_narrative(
     else:
         narrative_lines.append("Insufficient historical signal data to characterize backtested trade outcomes.")
 
+    # Structure narrative
     if trend_phase == "Short-Term Breakout 🚀":
         narrative_lines.append("Structural regime aligns with a short-term breakout phase, favoring momentum continuation setups.")
     elif trend_phase == "Healthy Uptrend 📈":
@@ -607,14 +562,17 @@ def compute_signal_quality_and_narrative(
         "structure_score": round(structure_score, 1),
     }
 
+
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
     selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
 
     if not historical_data.empty:
+
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
         if sentiment["status"] == "Active":
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
@@ -645,6 +603,7 @@ with tab_sentiment:
             close = ticker_df["Close"]
             high = ticker_df["High"]
             low = ticker_df["Low"]
+            volume = ticker_df.get("Volume", None)
 
             delta = close.diff()
             gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -769,6 +728,7 @@ with tab_sentiment:
             entry_index = None
 
             for i in range(1, len(close)):
+
                 if (
                     position is None and
                     close.iloc[i] > sma20.iloc[i] and
@@ -854,45 +814,244 @@ with tab_sentiment:
                 st.metric("Sideways Scenario", f"{sideway_prob*100:.1f}%")
             with c4:
                 st.metric("Pullback Scenario", f"{pullback_prob*100:.1f}%")
-        else:
-            st.error("Sentiment engine returned error state.")
-    else:
-        st.error("Historical data unavailable.")
 
-# --- TAB 3: MACRO WEALTH & LONG-TERM ---
-with tab_macro:
-    st.subheader("Macro Wealth & Long-Term Investment Structure")
+            st.markdown("### 🌐 Market vs Ticker Sentiment")
 
-    if historical_data.empty:
-        st.error("Historical data unavailable.")
-    else:
-        macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
-        if macro_df.empty:
-            st.warning("No macro structures could be derived from current dataset.")
-        else:
-            st.dataframe(macro_df, use_container_width=True, hide_index=True)
+            market_scores = []
+            for tk in universe:
+                if tk in historical_data.columns.get_level_values(0):
+                    s = calculate_advanced_sentiment(historical_data, tk)
+                    if s.get("status") == "Active":
+                        market_scores.append(s.get("score", 50))
 
-# --- TAB 4: AI STOCK SELECTION ENGINE ---
-with tab_ai:
-    st.subheader("🤖 AI Stock Selection Engine")
+            if market_scores:
+                market_sentiment = float(np.mean(market_scores))
+                rel_sentiment = sentiment["score"] - market_sentiment
 
-    if historical_data.empty:
-        st.error("Historical data unavailable.")
-    else:
-        with st.spinner("Running AI multi-factor engine..."):
-            ai_df = build_ai_stock_selection_table(historical_data, universe, fundamental_cache)
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Ticker Sentiment", sentiment["score"])
+                with c2:
+                    st.metric("Market Sentiment", f"{market_sentiment:.1f}")
+                with c3:
+                    st.metric("Relative Sentiment", f"{rel_sentiment:+.1f}")
+            else:
+                st.caption("Market sentiment benchmark unavailable (insufficient data).")
 
-        if ai_df.empty:
-            st.warning("No assets passed AI engine filters.")
-        else:
-            st.dataframe(ai_df, use_container_width=True, hide_index=True)
+            # --- NEW v13.0 SIGNAL QUALITY ENGINE ---
+            st.markdown("### 🧠 Signal Quality & Narrative (v13.0)")
 
-            top = ai_df.iloc[0]
-            st.markdown("### 🏆 Top AI Pick")
-            c1, c2, c3 = st.columns(3)
+            signal_quality, narrative_lines, factor_scores = compute_signal_quality_and_narrative(
+                close=close,
+                sma20=sma20,
+                rsi_series=rsi_series,
+                vol_ratio_series=vol_ratio_series,
+                returns=returns,
+                win_rate=win_rate,
+                avg_return=avg_return,
+                trend_phase=trend_phase
+            )
+
+            c1, c2, c3, c4, c5 = st.columns(5)
             with c1:
-                st.metric("Ticker", top["Ticker"])
+                st.metric("Signal Quality", f"{signal_quality:.1f}/100")
             with c2:
-                st.metric("AI Score", top["AI Score"])
+                st.metric("Trend Score", f"{factor_scores['trend_score']:.1f}")
             with c3:
-                st.metric("Sentiment Score", top["Sentiment Score"])
+                st.metric("Momentum Score", f"{factor_scores['momentum_score']:.1f}")
+            with c4:
+                st.metric("Volatility Score", f"{factor_scores['vol_score']:.1f}")
+            with c5:
+                st.metric("Backtest Score", f"{factor_scores['backtest_score']:.1f}")
+
+            st.write("• " + "\n• ".join(narrative_lines))
+
+        else:
+            st.error(f"Engine Fault: {sentiment['error']}")
+
+# TAB 3 — LONG‑TERM MACRO + ENTRY/EXIT ENGINE
+with tab_macro:
+    st.subheader("🏛️ Institutional Macro Structural & Fundamental Scanner")
+    st.markdown("This module cross-references technical moving averages with corporate value parameters and long-term structural entry/exit zones.")
+
+    if historical_data.empty:
+        st.error("Engine Fault: Macro framework history inaccessible.")
+    else:
+
+        macro_df = calculate_macro_trends(historical_data, universe, fundamental_cache)
+
+        if macro_df.empty:
+            st.warning("Insufficient structural pricing matrix for 200-day horizons.")
+        else:
+
+            def classify_entry_exit(row):
+                dist = row["Dist. from 200D (%)"]
+                ret_6m = row["6M Return (%)"]
+                regime = row["Macro Structure"]
+
+                if regime in ["Short-Term Breakout 🚀", "Healthy Uptrend 📈", "Accumulation ⏳"] and -12 <= dist <= +5:
+                    entry = "🟢 Accumulation Zone (Near 200D Support)"
+                elif regime == "Accumulation ⏳" and dist < -12:
+                    entry = "🟡 Deep Value Accumulation (High Patience)"
+                elif "Neutral" in regime:
+                    entry = "⚪ Neutral / Wait for Better Structure"
+                else:
+                    entry = "🔻 Avoid New Long-Term Entries (Bear / Weak Structure)"
+
+                if "Short-Term Breakout" in regime and dist > 20 and ret_6m > 30:
+                    exit_zone = "🟥 Elevated Trim / Rebalance Risk"
+                elif dist > 15 and ret_6m > 20:
+                    exit_zone = "🟠 Watch for Exhaustion / Tighten Risk"
+                elif dist < -15 and "Neutral" not in regime and "Accumulation" not in regime:
+                    exit_zone = "🔻 Capital Preservation Focus"
+                else:
+                    exit_zone = "🟢 Hold / No Structural Exit Signal"
+
+                if "Accu" in entry:
+                    bias = "Long-Term Accumulation Bias"
+                elif "Trim" in exit_zone or "Exhaustion" in exit_zone:
+                    bias = "Hold / Trim on Strength"
+                elif "Avoid" in entry or "Capital" in exit_zone:
+                    bias = "Defensive / Underweight Bias"
+                else:
+                    bias = "Core Hold / Monitor"
+
+                return pd.Series({
+                    "Best Entry Zone": entry,
+                    "Exit / Trim Zone": exit_zone,
+                    "Holding Bias": bias
+                })
+
+            macro_df[["Best Entry Zone", "Exit / Trim Zone", "Holding Bias"]] = macro_df.apply(
+                classify_entry_exit, axis=1
+            )
+
+            st.markdown("## 🟢 Long-Term Entry Watchlist (Top Accumulation Candidates)")
+
+            entry_candidates = macro_df[
+                macro_df["Best Entry Zone"].str.contains("Accu")
+            ].sort_values("Dist. from 200D (%)", ascending=True)
+
+            if entry_candidates.empty:
+                st.info("No assets currently in long-term accumulation zones.")
+            else:
+                st.dataframe(
+                    entry_candidates[
+                        [
+                            "Ticker",
+                            "Current Price",
+                            "Dist. from 200D (%)",
+                            "6M Return (%)",
+                            "Macro Structure",
+                            "Best Entry Zone"
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            st.divider()
+
+            st.markdown("## 🟥 Trim Risk Radar — Extended / Overstretched Structures")
+
+            trim_risk = macro_df[
+                macro_df["Exit / Trim Zone"].str.contains("Trim|Exhaustion")
+            ].copy()
+
+            if trim_risk.empty:
+                st.info("No assets currently showing structural trim/exhaustion risk.")
+            else:
+                trim_risk["Abs Dist from 200D"] = trim_risk["Dist. from 200D (%)"].abs()
+                trim_risk["Risk Rank"] = (
+                    trim_risk["Abs Dist from 200D"] * 0.6 +
+                    trim_risk["6M Return (%)"] * 0.4
+                )
+
+                trim_risk = trim_risk.sort_values("Risk Rank", ascending=False)
+
+                st.dataframe(
+                    trim_risk[
+                        [
+                            "Ticker",
+                            "Current Price",
+                            "Dist. from 200D (%)",
+                            "6M Return (%)",
+                            "Macro Structure",
+                            "Exit / Trim Zone",
+                            "Risk Rank"
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            st.divider()
+
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                regimes = ["All"] + list(macro_df["Macro Structure"].unique())
+                selected_regime = st.selectbox("Filter Portfolio Regime Structure:", regimes)
+            with f_col2:
+                pe_filter = st.radio("Valuation Sorting Priority:", ["None", "Lowest P/E First", "Highest Margin First"])
+
+            filtered_df = macro_df if selected_regime == "All" else macro_df[macro_df["Macro Structure"] == selected_regime]
+
+            if pe_filter == "Lowest P/E First":
+                filtered_df = filtered_df.assign(
+                    pe_numeric=pd.to_numeric(filtered_df["P/E Ratio"], errors="coerce").fillna(np.inf)
+                ).sort_values("pe_numeric").drop(columns=["pe_numeric"])
+
+            elif pe_filter == "Highest Margin First":
+                filtered_df = filtered_df.assign(
+                    margin_numeric=pd.to_numeric(filtered_df["Profit Margin"].str.replace("%", ""), errors="coerce").fillna(-np.inf)
+                ).sort_values("margin_numeric", ascending=False).drop(columns=["margin_numeric"])
+
+            else:
+                filtered_df = filtered_df.sort_values("Dist. from 200D (%)")
+
+            st.dataframe(
+                filtered_df[
+                    [
+                        "Ticker",
+                        "Current Price",
+                        "Market Cap",
+                        "P/E Ratio",
+                        "Profit Margin",
+                        "Dist. from 200D (%)",
+                        "6M Return (%)",
+                        "Macro Structure",
+                        "Best Entry Zone",
+                        "Exit / Trim Zone",
+                        "Holding Bias",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.subheader("Macro Trend Construction Visualization")
+            viz_ticker = st.selectbox(
+                "Select Asset for Multi-Month Visual Inspection:",
+                filtered_df["Ticker"].tolist()
+            )
+
+            try:
+                ticker_close = historical_data[viz_ticker]["Close"].dropna()
+                t_50 = ticker_close.rolling(50).mean()
+                t_200 = ticker_close.rolling(200).mean()
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=ticker_close.index, y=ticker_close, name="Spot Price", line=dict(color="#38bdf8")))
+                fig.add_trace(go.Scatter(x=t_50.index, y=t_50, name="50D SMA", line=dict(color="#f59e0b", dash="dash")))
+                fig.add_trace(go.Scatter(x=t_200.index, y=t_200, name="200D SMA", line=dict(color="#ef4444", width=2)))
+
+                fig.update_layout(
+                    title=f"{viz_ticker} Structural Health Matrix",
+                    template="plotly_dark",
+                    xaxis_rangeslider_visible=False,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            except Exception as e:
+                st.caption(f"Could not build visualization for {viz_ticker}: {e}")
