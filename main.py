@@ -410,11 +410,13 @@ with st.spinner("Syncing technical historical structures..."):
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
 
-tab_momentum, tab_sentiment, tab_macro = st.tabs([
+tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
     "⚡ Short-Term Momentum",
     "🔮 Technical Sentiment",
-    "🏛️ Macro Wealth & Long-Term Investment"
+    "🏛️ Macro Wealth & Long-Term Investment",
+    "🤖 AI Stock Selection Engine"
 ])
+
 
 # TAB 1
 with tab_momentum:
@@ -1055,3 +1057,87 @@ with tab_macro:
 
             except Exception as e:
                 st.caption(f"Could not build visualization for {viz_ticker}: {e}")
+
+with tab_ai:
+    st.subheader("🤖 AI Stock Selection Engine")
+
+    if historical_data.empty:
+        st.error("Historical data unavailable — AI engine cannot evaluate universe.")
+    else:
+        st.caption("Multi-factor engine combining sentiment, structure, momentum, stability, and fundamentals into a unified AI score.")
+
+        # Controls
+        colf1, colf2, colf3 = st.columns(3)
+        with colf1:
+            min_ai = st.slider("Minimum AI Score Filter", 0, 100, 60, 5)
+        with colf2:
+            min_mcap = st.selectbox(
+                "Market Cap Filter",
+                ["All", "≥ $1B", "≥ $10B", "≥ $100B"]
+            )
+        with colf3:
+            sort_key = st.selectbox(
+                "Sort By",
+                ["AI Score (0–100)", "3M Return (%)", "6M Return (%)", "Sentiment Score"]
+            )
+
+        with st.spinner("Synthesizing AI-ranked opportunity set..."):
+            ai_df = build_ai_stock_selection_table(
+                historical_data,
+                universe,
+                fundamental_cache
+            )
+
+        if ai_df.empty:
+            st.warning("No assets passed AI engine filters.")
+        else:
+            # Market cap numeric filter
+            def mcap_to_num(x):
+                if isinstance(x, str) and x.startswith("$"):
+                    try:
+                        if x.endswith("T"):
+                            return float(x[1:-1]) * 1e12
+                        if x.endswith("B"):
+                            return float(x[1:-1]) * 1e9
+                        if x.endswith("M"):
+                            return float(x[1:-1]) * 1e6
+                    except Exception:
+                        return np.nan
+                return np.nan
+
+            ai_df["_mcap_num"] = ai_df["Market Cap"].apply(mcap_to_num)
+
+            if min_mcap == "≥ $1B":
+                ai_df = ai_df[ai_df["_mcap_num"] >= 1e9]
+            elif min_mcap == "≥ $10B":
+                ai_df = ai_df[ai_df["_mcap_num"] >= 1e10]
+            elif min_mcap == "≥ $100B":
+                ai_df = ai_df[ai_df["_mcap_num"] >= 1e11]
+
+            if ai_df.empty:
+                st.warning("No assets match the current AI + market cap filters.")
+            else:
+                ai_df = ai_df.sort_values(by=sort_key, ascending=False)
+
+                st.markdown("### 🔝 Top AI-Ranked Candidates")
+                st.dataframe(
+                    ai_df.drop(columns=["_mcap_num"]),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Highlight top pick
+                top_row = ai_df.iloc[0]
+                st.markdown("### 🏆 Featured AI Pick")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Ticker", top_row["Ticker"])
+                with c2:
+                    st.metric("AI Score", f"{top_row['AI Score (0–100)']:.1f}")
+                with c3:
+                    st.metric("Sentiment", f"{top_row['Sentiment Score']:.1f} ({top_row['Sentiment Label']})")
+
+                st.caption(
+                    "AI score blends structural regime, sentiment, momentum, stability, and fundamentals into a single ranking metric."
+                )
+
