@@ -410,11 +410,13 @@ with st.spinner("Syncing technical historical structures..."):
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(universe)
 
-tab_momentum, tab_sentiment, tab_macro = st.tabs([
+tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
     "⚡ Short-Term Momentum",
     "🔮 Technical Sentiment",
-    "🏛️ Macro Wealth & Long-Term Investment"
+    "🏛️ Macro Wealth & Long-Term Investment",
+    "🤖 AI Stock Selection Engine"
 ])
+
 
 # TAB 1
 with tab_momentum:
