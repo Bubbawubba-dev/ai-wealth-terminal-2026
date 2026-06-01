@@ -896,3 +896,66 @@ with tab_ai:
                 st.metric("AI Score", top["AI Score"])
             with c3:
                 st.metric("Sentiment Score", top["Sentiment Score"])
+
+# --- TOP 3 AI PICKS PANEL ---
+st.markdown("## 🏆 Top 3 AI Picks")
+
+if not ai_df.empty:
+    top3 = ai_df.head(3)
+
+    # Custom styling for premium cards
+    card_style = """
+        <style>
+        .ai-card {
+            background: rgba(15, 23, 42, 0.55);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 12px;
+            backdrop-filter: blur(12px);
+        }
+        .ai-rank {
+            font-size: 22px;
+            font-weight: 700;
+            color: #38bdf8;
+        }
+        .ai-ticker {
+            font-size: 28px;
+            font-weight: 800;
+            color: #f8fafc;
+        }
+        .ai-score {
+            font-size: 22px;
+            font-weight: 700;
+            color: #22c55e;
+        }
+        .ai-structure {
+            font-size: 16px;
+            color: #cbd5e1;
+        }
+        </style>
+    """
+    st.markdown(card_style, unsafe_allow_html=True)
+
+    for idx, row in top3.iterrows():
+        rank_label = ["🥇 #1", "🥈 #2", "🥉 #3"][idx]
+
+        st.markdown(f"""
+            <div class="ai-card">
+                <div class="ai-rank">{rank_label}</div>
+                <div class="ai-ticker">{row['Ticker']}</div>
+                <div class="ai-score">AI Score: {row['AI Score']}</div>
+                <div class="ai-structure">{row['Structure']}</div>
+                <br>
+                <div style="color:#94a3b8;">
+                    Sentiment: {row['Sentiment Score']} • 
+                    3M Return: {row['3M Return (%)']}% • 
+                    Stability: {row['Stability']} • 
+                    Quality: {row['Quality']} • 
+                    Value: {row['Value']}
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+else:
+    st.warning("AI Engine returned no ranked assets.")
