@@ -460,11 +460,39 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
 
+st.sidebar.markdown("### ➕ Add Custom Stocks")
+
+# Manual text input (comma-separated)
+manual_input = st.sidebar.text_input(
+    "Enter tickers (comma-separated):",
+    placeholder="e.g., TSLA, AAPL, PLTR"
+)
+
+# Convert to list
+manual_list = []
+if manual_input:
+    manual_list = [t.strip().upper() for t in manual_input.split(",") if t.strip()]
+
+# Multi-select dropdown
+custom_select = st.sidebar.multiselect(
+    "Or select from universe:",
+    options=universe,
+    default=[]
+)
+
+# Merge all tickers
+user_added_tickers = list(set(manual_list + custom_select))
+
+# Final universe = base + user-added
+full_universe = list(set(universe + user_added_tickers))
+
+st.sidebar.success(f"Tracking {len(full_universe)} total tickers")
+
 with st.spinner("Syncing technical historical structures..."):
-    historical_data = fetch_historical_data(universe)
+    historical_data = fetch_historical_data(full universe)
 
 with st.spinner("Extracting corporate fundamental structures..."):
-    fundamental_cache = fetch_fundamental_metrics(universe)
+    fundamental_cache = fetch_fundamental_metrics(full universe)
 
 tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
     "⚡ Short-Term Momentum",
@@ -477,7 +505,7 @@ tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
 with tab_momentum:
     st.subheader("Explosive Short-Term Breakout Scanner")
     if not historical_data.empty:
-        momentum_df = calculate_momentum_metrics(historical_data, universe)
+        momentum_df = calculate_momentum_metrics(historical_data, full universe)
         if not momentum_df.empty:
             st.dataframe(momentum_df, use_container_width=True, hide_index=True)
         else:
@@ -880,7 +908,7 @@ with tab_ai:
         st.error("Historical data unavailable.")
     else:
         with st.spinner("Running AI multi-factor engine..."):
-            ai_df = build_ai_stock_selection_table(historical_data, universe, fundamental_cache)
+            ai_df = build_ai_stock_selection_table(historical_data, full universe, fundamental_cache)
 
         if ai_df.empty:
             st.warning("No assets passed AI engine filters.")
