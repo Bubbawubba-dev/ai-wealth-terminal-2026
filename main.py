@@ -489,10 +489,10 @@ full_universe = list(set(universe + user_added_tickers))
 st.sidebar.success(f"Tracking {len(full_universe)} total tickers")
 
 with st.spinner("Syncing technical historical structures..."):
-    historical_data = fetch_historical_data(full universe)
+    historical_data = fetch_historical_data(full_universe)
 
 with st.spinner("Extracting corporate fundamental structures..."):
-    fundamental_cache = fetch_fundamental_metrics(full universe)
+    fundamental_cache = fetch_fundamental_metrics(full_universe)
 
 tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
     "⚡ Short-Term Momentum",
@@ -505,7 +505,7 @@ tab_momentum, tab_sentiment, tab_macro, tab_ai = st.tabs([
 with tab_momentum:
     st.subheader("Explosive Short-Term Breakout Scanner")
     if not historical_data.empty:
-        momentum_df = calculate_momentum_metrics(historical_data, full universe)
+        momentum_df = calculate_momentum_metrics(historical_data, full_universe)
         if not momentum_df.empty:
             st.dataframe(momentum_df, use_container_width=True, hide_index=True)
         else:
@@ -908,7 +908,7 @@ with tab_ai:
         st.error("Historical data unavailable.")
     else:
         with st.spinner("Running AI multi-factor engine..."):
-            ai_df = build_ai_stock_selection_table(historical_data, full universe, fundamental_cache)
+            ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
 
         if ai_df.empty:
             st.warning("No assets passed AI engine filters.")
