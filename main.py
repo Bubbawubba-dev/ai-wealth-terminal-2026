@@ -925,13 +925,12 @@ with tab_ai:
             with c3:
                 st.metric("Sentiment Score", top["Sentiment Score"])
 
-# --- TOP 3 AI PICKS PANEL ---
-st.markdown("## 🏆 Top 3 AI Picks")
+# --- TOP 3 AI PICKS PANEL (with Entry/Exit Levels) ---
+st.markdown("## 🏆 Top 3 AI Picks — With Daily Entry & Exit Levels")
 
-if not ai_df.empty:
+if ai_df is not None and not ai_df.empty:
     top3 = ai_df.head(3)
 
-    # Custom styling for premium cards
     card_style = """
         <style>
         .ai-card {
@@ -961,29 +960,32 @@ if not ai_df.empty:
             font-size: 16px;
             color: #cbd5e1;
         }
+        .ai-entry {
+            font-size: 18px;
+            font-weight: 700;
+            color: #22c55e;
+        }
+        .ai-exit {
+            font-size: 18px;
+            font-weight: 700;
+            color: #ef4444;
+        }
         </style>
     """
     st.markdown(card_style, unsafe_allow_html=True)
 
     for idx, row in top3.iterrows():
-        rank_label = ["🥇 #1", "🥈 #2", "🥉 #3"][idx]
+        ticker = row["Ticker"]
+        df = historical_data[ticker].dropna()
 
-        st.markdown(f"""
-            <div class="ai-card">
-                <div class="ai-rank">{rank_label}</div>
-                <div class="ai-ticker">{row['Ticker']}</div>
-                <div class="ai-score">AI Score: {row['AI Score']}</div>
-                <div class="ai-structure">{row['Structure']}</div>
-                <br>
-                <div style="color:#94a3b8;">
-                    Sentiment: {row['Sentiment Score']} • 
-                    3M Return: {row['3M Return (%)']}% • 
-                    Stability: {row['Stability']} • 
-                    Quality: {row['Quality']} • 
-                    Value: {row['Value']}
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
+        close = df["Close"].iloc[-1]
+        sma20 = df["Close"].rolling(20).mean().iloc[-1]
 
-else:
-    st.warning("AI Engine returned no ranked assets.")
+        # ATR calculations
+        high = df["High"]
+        low = df["Low"]
+        tr = np.maximum(
+            (high - low),
+            np.maximum(abs(high - close), abs(low - close))
+        )
+        atr20
