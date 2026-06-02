@@ -642,7 +642,7 @@ def compute_signal_quality_and_narrative(
 
 with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
-    selected_ticker = st.selectbox("Select Target Engine Asset:", universe)
+    selected_ticker = st.selectbox("Select Target Engine Asset:", full_universe)
 
     if not historical_data.empty:
         sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
