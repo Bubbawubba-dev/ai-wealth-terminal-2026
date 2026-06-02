@@ -912,80 +912,64 @@ with tab_ai:
     if historical_data.empty:
         st.error("Historical data unavailable.")
     else:
-        if ai_df.empty:
-            with st.spinner("Running AI multi-factor engine..."):
-                local_ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
-        else:
-            local_ai_df = ai_df
 
-        if local_ai_df.empty:
-            st.warning("No assets passed AI engine filters.")
-        else:
-            st.dataframe(local_ai_df, use_container_width=True, hide_index=True)
+        st.markdown("### 🔍 AI Engine Diagnostics")
+        debug_log = []
 
-            top = local_ai_df.iloc[0]
-            st.markdown("### 🏆 Top AI Pick")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric("Ticker", top["Ticker"])
-            with c2:
-                st.metric("AI Score", top["AI Score"])
-            with c3:
-                st.metric("Sentiment Score", top["Sentiment Score"])
+        # Build AI table with diagnostics
+        rows = []
+        available = historical_data.columns.get_level_values(0).unique()
 
-            st.markdown("## 🏆 Top 3 AI Picks")
+        for ticker in full_universe:
 
-            top3 = local_ai_df.head(3)
+            if ticker not in available:
+                debug_log.append(f"❌ {ticker}: No historical data")
+                continue
 
-            card_style = """
-                <style>
-                .ai-card {
-                    background: rgba(15, 23, 42, 0.55);
-                    border: 1px solid rgba(148, 163, 184, 0.25);
-                    border-radius: 12px;
-                    padding: 18px;
-                    margin-bottom: 12px;
-                    backdrop-filter: blur(12px);
-                }
-                .ai-rank {
-                    font-size: 22px;
-                    font-weight: 700;
-                    color: #38bdf8;
-                }
-                .ai-ticker {
-                    font-size: 28px;
-                    font-weight: 800;
-                    color: #f8fafc;
-                }
-                .ai-score {
-                    font-size: 22px;
-                    font-weight: 700;
-                    color: #22c55e;
-                }
-                .ai-structure {
-                    font-size: 16px;
-                    color: #cbd5e1;
-                }
-                </style>
-            """
-            st.markdown(card_style, unsafe_allow_html=True)
+            df = historical_data[ticker].dropna()
+            if len(df) < 20:
+                debug_log.append(f"❌ {ticker}: Not enough candles ({len(df)})")
+                continue
 
-            for idx, row in top3.iterrows():
-                rank_label = ["🥇 #1", "🥈 #2", "🥉 #3"][idx]
+            fundamentals = fundamental_cache.get(ticker, None)
+            if fundamentals is None:
+                debug_log.append(f"❌ {ticker}: No fundamentals")
+                continue
 
-                st.markdown(f"""
-                    <div class="ai-card">
-                        <div class="ai-rank">{rank_label}</div>
-                        <div class="ai-ticker">{row['Ticker']}</div>
-                        <div class="ai-score">AI Score: {row['AI Score']}</div>
-                        <div class="ai-structure">{row['Structure']}</div>
-                        <br>
-                        <div style="color:#94a3b8;">
-                            Sentiment: {row['Sentiment Score']} • 
-                            3M Return: {row['3M Return (%)']}% • 
-                            Stability: {row['Stability']} • 
-                            Quality: {row['Quality']} • 
-                            Value: {row['Value']}
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
+            factor = compute_factor_scores(historical_data, ticker, fundamentals)
+            if factor is None:
+                debug_log.append(f"❌ {ticker}: Factor model failed")
+                continue
+
+            sentiment = calculate_advanced_sentiment(historical_data, ticker)
+            sent_score = sentiment.get("score", 50)
+
+            ai_score = (
+                sent_score * 0.35 +
+                factor["3M"] * 0.25 +
+                factor["Stability"] * 10 * 0.20 +
+                factor["Quality"] * 0.10 +
+                factor["Value"] * 100 * 0.10
+            )
+            ai_score = float(np.clip(ai_score, 0, 100))
+
+            rows.append({
+                "Ticker": ticker,
+                "Price": round(df["Close"].iloc[-1], 2),
+                "AI Score": round(ai_score, 1),
+                "Sentiment Score": sent_score,
+                "3M Return (%)": round(factor["3M"], 2),
+                "Stability": round(factor["Stability"], 2),
+                "Quality": round(factor["Quality"], 2),
+                "Value": round(factor["Value"], 4),
+                "Structure": classify_structure(unified_signal(df)),
+                "Market Cap": fundamentals["Market Cap"],
+                "P/E Ratio": fundamentals["P/E Ratio"],
+                "Profit Margin": fundamentals["Profit Margin"],
+            })
+
+        # Show diagnostics
+        with st.expander("⚙️ Engine Diagnostics Log"):
+            for line in debug_log:
+                st.write(line)
+
