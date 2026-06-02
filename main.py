@@ -899,7 +899,7 @@ with tab_macro:
     if historical_data.empty:
         st.error("Historical data unavailable.")
     else:
-        macro_df = calculate_macro_trends(historical_data, all_universe, fundamental_cache)
+        macro_df = calculate_macro_trends(historical_data, full_universe, fundamental_cache)
         if macro_df.empty:
             st.warning("No macro structures could be derived from current dataset.")
         else:
