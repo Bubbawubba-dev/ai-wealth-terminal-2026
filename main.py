@@ -486,6 +486,10 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
             if len(df) < 80:
                 continue
 
+            intraday_df = intraday_snap.get(ticker, pd.DataFrame())
+            daily_tail = df.tail(30)
+            shock = compute_ticker_shock(intraday_df, daily_tail)
+
             sig = unified_signal(df)
             structure = classify_structure(sig)
 
@@ -553,6 +557,51 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
 st.title("📈 Wealth Terminal v12.0")
 universe = get_base_universe()
 
+with st.spinner("Syncing intraday market stress regime..."):
+    # Example: use QQQ as proxy; you can switch to SPY or your own index basket
+    intraday_index = fetch_intraday_snapshot(["QQQ"]).get("QQQ", pd.DataFrame())
+    market_shock = compute_market_shock_index(intraday_index)
+
+if market_shock >= 80:
+    color = "🔴"
+    label = "Shock / Crash Regime"
+elif market_shock >= 60:
+    color = "🟠"
+    label = "Stress Regime"
+elif market_shock >= 40:
+    color = "🟡"
+    label = "Elevated Volatility"
+else:
+    color = "🟢"
+    label = "Calm / Normal"
+
+st.markdown(
+    f"**{color} Market Shock Index: {market_shock} — {label}**  "
+    f"&nbsp;&nbsp;_Intraday stress vs recent volatility._"
+)
+
+with st.spinner("Syncing intraday market stress regime..."):
+    # Example: use QQQ as proxy; you can switch to SPY or your own index basket
+    intraday_index = fetch_intraday_snapshot(["QQQ"]).get("QQQ", pd.DataFrame())
+    market_shock = compute_market_shock_index(intraday_index)
+
+if market_shock >= 80:
+    color = "🔴"
+    label = "Shock / Crash Regime"
+elif market_shock >= 60:
+    color = "🟠"
+    label = "Stress Regime"
+elif market_shock >= 40:
+    color = "🟡"
+    label = "Elevated Volatility"
+else:
+    color = "🟢"
+    label = "Calm / Normal"
+
+st.markdown(
+    f"**{color} Market Shock Index: {market_shock} — {label}**  "
+    f"&nbsp;&nbsp;_Intraday stress vs recent volatility._"
+)
 st.sidebar.markdown("### ➕ Add Custom Stocks")
 
 # Manual text input (comma-separated)
