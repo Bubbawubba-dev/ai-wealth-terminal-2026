@@ -1048,14 +1048,44 @@ with tab_breakout:
 
 with tab_pullback:
     st.subheader("📉 Pullback Scanner — 38.2% to 61.8% Retracement Zones")
+
     if not historical_data.empty:
         df_pullback = pullback_scanner(historical_data, full_universe)
+
         if not df_pullback.empty:
-            st.dataframe(df_pullback, use_container_width=True, hide_index=True)
+
+            # Auto-highlighting logic
+            def highlight_pullback(row):
+                price = row["Price"]
+                pb382 = row["Pullback 38.2%"]
+                pb618 = row["Pullback 61.8%"]
+
+                # Strong trend pullback (near 38.2%)
+                if abs(price - pb382) <= abs(pb618 - pb382) * 0.25:
+                    return ["background-color: #14532d; color: white"] * len(row)
+
+                # Deep dip reversal (near 61.8%)
+                if abs(price - pb618) <= abs(pb618 - pb382) * 0.25:
+                    return ["background-color: #1e3a8a; color: white"] * len(row)
+
+                # Trend may be failing (below 61.8%)
+                if price < pb618:
+                    return ["background-color: #7f1d1d; color: white"] * len(row)
+
+                # Neutral zone
+                return [""] * len(row)
+
+            st.dataframe(
+                df_pullback.style.apply(highlight_pullback, axis=1),
+                use_container_width=True,
+                hide_index=True
+            )
+
         else:
             st.info("No assets currently in optimal pullback zones.")
     else:
         st.error("Historical data unavailable.")
+
 
 # =========================================================
 # TAB 4: TECHNICAL SENTIMENT (REGIME-AWARE)
