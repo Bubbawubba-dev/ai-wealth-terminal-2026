@@ -985,21 +985,25 @@ st.markdown(
     f"&nbsp;&nbsp;_Intraday stress vs recent volatility._"
 )
 
-with st.spinner("Syncing volatility regime..."):
-    uvxy_ind = compute_uvxy_vix_indicator()
+with st.spinner("Syncing UVXY volatility signals..."):
+    uvxy_auto = compute_uvxy_auto_signal()
 
-if "UVXY Score" in uvxy_ind:
-    st.markdown("### 🌪 UVXY Volatility Indicator")
+if "UVXY Score" in uvxy_auto:
+    st.markdown("### 🌪 UVXY Auto‑Signal Engine")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("VIX", uvxy_ind["VIX"])
-    col2.metric("VIX Change (%)", uvxy_ind["VIX Change (%)"])
-    col3.metric("Term Structure", uvxy_ind["Term Structure"])
+    col1.metric("VIX", uvxy_auto["VIX"])
+    col2.metric("VIX Change (%)", uvxy_auto["VIX Change (%)"])
+    col3.metric("Term Structure", uvxy_auto["Term Structure"])
 
-    st.metric("Volatility Regime", uvxy_ind["Regime"])
-    st.metric("UVXY Score (0–100)", uvxy_ind["UVXY Score"])
+    st.metric("Volatility Regime", uvxy_auto["Regime"])
+    st.metric("UVXY Score (0–100)", uvxy_auto["UVXY Score"])
+    st.metric("Auto‑Signal", uvxy_auto["Auto Signal"])
 else:
-    st.info("VIX data unavailable.")
+    st.info("UVXY/VIX data unavailable.")
+
+with st.spinner("Syncing volatility regime..."):
+    uvxy_ind = compute_uvxy_vix_indicator()
 
 def compute_uvxy_auto_signal():
     try:
@@ -1054,6 +1058,21 @@ def compute_uvxy_auto_signal():
 
     except Exception:
         return {"status": "Error"}
+
+
+
+if "UVXY Score" in uvxy_ind:
+    st.markdown("### 🌪 UVXY Volatility Indicator")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("VIX", uvxy_ind["VIX"])
+    col2.metric("VIX Change (%)", uvxy_ind["VIX Change (%)"])
+    col3.metric("Term Structure", uvxy_ind["Term Structure"])
+
+    st.metric("Volatility Regime", uvxy_ind["Regime"])
+    st.metric("UVXY Score (0–100)", uvxy_ind["UVXY Score"])
+else:
+    st.info("VIX data unavailable.")
 
 
 
