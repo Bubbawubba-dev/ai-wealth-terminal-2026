@@ -933,27 +933,6 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
 
     return pd.DataFrame(rows).sort_values(by="AI Score", ascending=False).reset_index(drop=True)
 
-def build_top_picks_today(ai_df, breakout_df, pullback_df, momentum_df, macro_df):
-    if ai_df.empty:
-        return pd.DataFrame()
-
-    df = ai_df.copy()
-
-    df["Breakout_Flag"] = df["Ticker"].isin(breakout_df["Ticker"])
-    df["Pullback_Flag"] = df["Ticker"].isin(pullback_df["Ticker"])
-    df["Momentum_Flag"] = df["Ticker"].isin(momentum_df["Ticker"])
-    df["Macro_Flag"] = df["Ticker"].isin(macro_df["Ticker"])
-
-    df["CompositeRank"] = (
-        df["AI Score"] * 0.50 +
-        df["Breakout_Flag"].astype(int) * 15 +
-        df["Pullback_Flag"].astype(int) * 15 +
-        df["Momentum_Flag"].astype(int) * 10 +
-        df["Macro_Flag"].astype(int) * 10
-    )
-
-    df = df.sort_values(by="CompositeRank", ascending=False)
-    return df.head(10)
 
 # =========================================================
 # 8. USER INTERFACE
@@ -1402,29 +1381,5 @@ with tab_ai:
             st.dataframe(ai_df, use_container_width=True, hide_index=True)
         else:
             st.info("AI engine did not find any qualified candidates (check data coverage and universe).")
-    else:
-        st.error("Historical data unavailable.")
-
-tab_top_picks = st.tabs(["🔥 Top Picks Today"])[0]
-
-with tab_top_picks:
-    st.subheader("🔥 Top Picks Today — Multi‑Engine Consensus")
-
-    if not historical_data.empty:
-        ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
-        breakout_df = breakout_radar(historical_data, full_universe)
-        pullback_df = pullback_scanner(historical_data, full_universe)
-        momentum_df = calculate_momentum_metrics(historical_data, full_universe)
-        macro_df = calculate_macro_trends(historical_data, full_universe, fundamental_cache)
-
-        top_picks = build_top_picks_today(ai_df, breakout_df, pullback_df, momentum_df, macro_df)
-
-        if not top_picks.empty:
-            st.dataframe(top_picks, use_container_width=True, hide_index=True)
-
-            st.markdown("### 🏆 Auto‑Selected Best 3 Trades")
-            st.dataframe(top_picks.head(3), use_container_width=True, hide_index=True)
-        else:
-            st.info("No top picks available today.")
     else:
         st.error("Historical data unavailable.")
