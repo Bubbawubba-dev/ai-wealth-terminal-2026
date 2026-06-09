@@ -985,8 +985,8 @@ st.markdown(
     f"&nbsp;&nbsp;_Intraday stress vs recent volatility._"
 )
 
-    with st.spinner("Syncing volatility regime..."):
-    uvxy_ind = compute_uvxy_vix_indicator()
+with st.spinner("Syncing volatility regime..."):
+uvxy_ind = compute_uvxy_vix_indicator()
 
 if "UVXY Score" in uvxy_ind:
     st.markdown("### 🌪 UVXY Volatility Indicator")
