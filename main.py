@@ -467,6 +467,11 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             "score": 50,
             "label": "Neutral (Insufficient Data)",
             "error": str(e),
+            "metrics": {
+                "rsi_14": 50.0,
+                "ma_deviation_pct": 0.0,
+                "volatility_ratio": 1.0,
+            },
         }
 
 
@@ -478,11 +483,25 @@ def calculate_advanced_sentiment(df_history, ticker):
             "score": sentiment_result.get("score", 50),
             "label": sentiment_result.get("label", "Neutral"),
             "timestamp": sentiment_result.get("timestamp"),
-            "metrics": sentiment_result.get("metrics", {}),
+            "metrics": sentiment_result.get("metrics", {
+                "rsi_14": 50.0,
+                "ma_deviation_pct": 0.0,
+                "volatility_ratio": 1.0,
+            }),
             "error": sentiment_result.get("error"),
         }
     except Exception as e:
-        return {"status": "Error", "score": 50, "label": "Error", "error": str(e)}
+        return {
+            "status": "Error",
+            "score": 50,
+            "label": "Error",
+            "error": str(e),
+            "metrics": {
+                "rsi_14": 50.0,
+                "ma_deviation_pct": 0.0,
+                "volatility_ratio": 1.0,
+            },
+        }
 
 
 def calculate_macro_trends(df_history, tickers, fundamental_data):
@@ -1264,9 +1283,11 @@ with tab_sentiment:
                 with col1:
                     st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
                 with col2:
-                    st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
+                    rsi_val = sentiment.get("metrics", {}).get("rsi_14", 50.0)
+                    st.metric("RSI (14 Daily)", rsi_val)
                 with col3:
-                    st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
+                    vol_val = sentiment.get("metrics", {}).get("volatility_ratio", 1.0)
+                    st.metric("Volatility Multiplier", f"{vol_val}x")
 
                 ticker_df = historical_data[selected_ticker].dropna()
                 close = ticker_df["Close"]
