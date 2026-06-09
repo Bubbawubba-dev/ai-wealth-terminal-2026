@@ -1005,61 +1005,6 @@ else:
 with st.spinner("Syncing volatility regime..."):
     uvxy_ind = compute_uvxy_vix_indicator()
 
-def compute_uvxy_auto_signal():
-    try:
-        vix = yf.download("^VIX", period="10d", interval="1d")["Close"]
-        vix3m = yf.download("^VIX3M", period="10d", interval="1d")["Close"]
-
-        if vix.empty or vix3m.empty:
-            return {"status": "No Data"}
-
-        vix_now = vix.iloc[-1]
-        vix_prev = vix.iloc[-2] if len(vix) > 1 else vix_now
-        vix_change = (vix_now - vix_prev) / vix_prev * 100
-
-        term_structure = vix_now - vix3m.iloc[-1]  # backwardation if > 0
-
-        # Volatility regime
-        if vix_now < 15:
-            regime = "Calm"
-        elif vix_now < 20:
-            regime = "Elevated"
-        elif vix_now < 28:
-            regime = "Stress"
-        else:
-            regime = "Shock"
-
-        # UVXY composite score
-        uvxy_score = (
-            np.interp(vix_now, [12, 20, 28, 40], [10, 40, 70, 95]) * 0.6 +
-            np.interp(vix_change, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
-            (80 if term_structure > 0 else 20) * 0.1
-        )
-        uvxy_score = int(np.clip(uvxy_score, 0, 100))
-
-        # Auto-signal logic
-        if uvxy_score >= 80:
-            auto_signal = "Volatility Shock ⚠️"
-        elif uvxy_score >= 60:
-            auto_signal = "Volatility Expansion ↑"
-        elif uvxy_score <= 30:
-            auto_signal = "Volatility Compression ↓"
-        else:
-            auto_signal = "Neutral / No Edge"
-
-        return {
-            "VIX": round(vix_now, 2),
-            "VIX Change (%)": round(vix_change, 2),
-            "Term Structure": round(term_structure, 2),
-            "Regime": regime,
-            "UVXY Score": uvxy_score,
-            "Auto Signal": auto_signal,
-        }
-
-    except Exception:
-        return {"status": "Error"}
-
-
 
 if "UVXY Score" in uvxy_ind:
     st.markdown("### 🌪 UVXY Volatility Indicator")
@@ -1074,15 +1019,6 @@ if "UVXY Score" in uvxy_ind:
 else:
     st.info("VIX data unavailable.")
 
-
-
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 # =========================================================
 # 1. CONFIGURATION & STYLING
@@ -1223,6 +1159,60 @@ def compute_ticker_shock(intraday_df, daily_tail_df):
         "shock_z": round(shock_z, 2),
         "shock_score": int(np.clip(shock_score, 0, 100)),
     }
+
+def compute_uvxy_auto_signal():
+    try:
+        vix = yf.download("^VIX", period="10d", interval="1d")["Close"]
+        vix3m = yf.download("^VIX3M", period="10d", interval="1d")["Close"]
+
+        if vix.empty or vix3m.empty:
+            return {"status": "No Data"}
+
+        vix_now = vix.iloc[-1]
+        vix_prev = vix.iloc[-2] if len(vix) > 1 else vix_now
+        vix_change = (vix_now - vix_prev) / vix_prev * 100
+
+        term_structure = vix_now - vix3m.iloc[-1]  # backwardation if > 0
+
+        # Volatility regime
+        if vix_now < 15:
+            regime = "Calm"
+        elif vix_now < 20:
+            regime = "Elevated"
+        elif vix_now < 28:
+            regime = "Stress"
+        else:
+            regime = "Shock"
+
+        # UVXY composite score
+        uvxy_score = (
+            np.interp(vix_now, [12, 20, 28, 40], [10, 40, 70, 95]) * 0.6 +
+            np.interp(vix_change, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
+            (80 if term_structure > 0 else 20) * 0.1
+        )
+        uvxy_score = int(np.clip(uvxy_score, 0, 100))
+
+        # Auto-signal logic
+        if uvxy_score >= 80:
+            auto_signal = "Volatility Shock ⚠️"
+        elif uvxy_score >= 60:
+            auto_signal = "Volatility Expansion ↑"
+        elif uvxy_score <= 30:
+            auto_signal = "Volatility Compression ↓"
+        else:
+            auto_signal = "Neutral / No Edge"
+
+        return {
+            "VIX": round(vix_now, 2),
+            "VIX Change (%)": round(vix_change, 2),
+            "Term Structure": round(term_structure, 2),
+            "Regime": regime,
+            "UVXY Score": uvxy_score,
+            "Auto Signal": auto_signal,
+        }
+
+    except Exception:
+        return {"status": "Error"}
 
 
 @st.cache_data(ttl=86400)
