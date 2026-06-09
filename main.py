@@ -147,107 +147,6 @@ def compute_ticker_shock(intraday_df, daily_tail_df):
     }
 
 
-def compute_uvxy_auto_signal():
-    """Compute UVXY auto-signal based on VIX volatility."""
-    try:
-        vix = yf.download("^VIX", period="10d", interval="1d")["Close"]
-        vix3m = yf.download("^VIX3M", period="10d", interval="1d")["Close"]
-
-        if vix.empty or vix3m.empty:
-            return {"status": "No Data"}
-
-        vix_now = vix.iloc[-1]
-        vix_prev = vix.iloc[-2] if len(vix) > 1 else vix_now
-        vix_change = (vix_now - vix_prev) / vix_prev * 100
-
-        term_structure = vix_now - vix3m.iloc[-1]  # backwardation if > 0
-
-        # Volatility regime
-        if vix_now < 15:
-            regime = "Calm"
-        elif vix_now < 20:
-            regime = "Elevated"
-        elif vix_now < 28:
-            regime = "Stress"
-        else:
-            regime = "Shock"
-
-        # UVXY composite score
-        uvxy_score = (
-            np.interp(vix_now, [12, 20, 28, 40], [10, 40, 70, 95]) * 0.6 +
-            np.interp(vix_change, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
-            (80 if term_structure > 0 else 20) * 0.1
-        )
-        uvxy_score = int(np.clip(uvxy_score, 0, 100))
-
-        # Auto-signal logic
-        if uvxy_score >= 80:
-            auto_signal = "Volatility Shock ⚠️"
-        elif uvxy_score >= 60:
-            auto_signal = "Volatility Expansion ↑"
-        elif uvxy_score <= 30:
-            auto_signal = "Volatility Compression ↓"
-        else:
-            auto_signal = "Neutral / No Edge"
-
-        return {
-            "VIX": round(vix_now, 2),
-            "VIX Change (%)": round(vix_change, 2),
-            "Term Structure": round(term_structure, 2),
-            "Regime": regime,
-            "UVXY Score": uvxy_score,
-            "Auto Signal": auto_signal,
-        }
-
-    except Exception:
-        return {"status": "Error"}
-
-
-def compute_uvxy_vix_indicator():
-    """Compute UVXY/VIX volatility indicator."""
-    try:
-        vix = yf.download("^VIX", period="10d", interval="1d")["Close"]
-        vix3m = yf.download("^VIX3M", period="10d", interval="1d")["Close"]
-
-        if vix.empty or vix3m.empty:
-            return {"status": "No Data"}
-
-        vix_now = vix.iloc[-1]
-        vix_prev = vix.iloc[-2] if len(vix) > 1 else vix_now
-        vix_change = (vix_now - vix_prev) / vix_prev * 100
-
-        term_structure = vix_now - vix3m.iloc[-1]
-
-        # Volatility regime
-        if vix_now < 15:
-            regime = "Calm"
-        elif vix_now < 20:
-            regime = "Elevated"
-        elif vix_now < 28:
-            regime = "Stress"
-        else:
-            regime = "Shock"
-
-        # UVXY composite score
-        uvxy_score = (
-            np.interp(vix_now, [12, 20, 28, 40], [10, 40, 70, 95]) * 0.6 +
-            np.interp(vix_change, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
-            (80 if term_structure > 0 else 20) * 0.1
-        )
-        uvxy_score = int(np.clip(uvxy_score, 0, 100))
-
-        return {
-            "VIX": round(vix_now, 2),
-            "VIX Change (%)": round(vix_change, 2),
-            "Term Structure": round(term_structure, 2),
-            "Regime": regime,
-            "UVXY Score": uvxy_score,
-        }
-
-    except Exception:
-        return {"status": "Error"}
-
-
 @st.cache_data(ttl=86400)
 def fetch_fundamental_metrics(tickers):
     fundamental_records = {}
@@ -467,11 +366,6 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             "score": 50,
             "label": "Neutral (Insufficient Data)",
             "error": str(e),
-            "metrics": {
-                "rsi_14": 50.0,
-                "ma_deviation_pct": 0.0,
-                "volatility_ratio": 1.0,
-            },
         }
 
 
@@ -483,25 +377,11 @@ def calculate_advanced_sentiment(df_history, ticker):
             "score": sentiment_result.get("score", 50),
             "label": sentiment_result.get("label", "Neutral"),
             "timestamp": sentiment_result.get("timestamp"),
-            "metrics": sentiment_result.get("metrics", {
-                "rsi_14": 50.0,
-                "ma_deviation_pct": 0.0,
-                "volatility_ratio": 1.0,
-            }),
+            "metrics": sentiment_result.get("metrics", {}),
             "error": sentiment_result.get("error"),
         }
     except Exception as e:
-        return {
-            "status": "Error",
-            "score": 50,
-            "label": "Error",
-            "error": str(e),
-            "metrics": {
-                "rsi_14": 50.0,
-                "ma_deviation_pct": 0.0,
-                "volatility_ratio": 1.0,
-            },
-        }
+        return {"status": "Error", "score": 50, "label": "Error", "error": str(e)}
 
 
 def calculate_macro_trends(df_history, tickers, fundamental_data):
@@ -1105,40 +985,6 @@ st.markdown(
     f"&nbsp;&nbsp;_Intraday stress vs recent volatility._"
 )
 
-with st.spinner("Syncing UVXY volatility signals..."):
-    uvxy_auto = compute_uvxy_auto_signal()
-
-if "UVXY Score" in uvxy_auto:
-    st.markdown("### 🌪 UVXY Auto‑Signal Engine")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("VIX", uvxy_auto["VIX"])
-    col2.metric("VIX Change (%)", uvxy_auto["VIX Change (%)"])
-    col3.metric("Term Structure", uvxy_auto["Term Structure"])
-
-    st.metric("Volatility Regime", uvxy_auto["Regime"])
-    st.metric("UVXY Score (0–100)", uvxy_auto["UVXY Score"])
-    st.metric("Auto‑Signal", uvxy_auto["Auto Signal"])
-else:
-    st.info("UVXY/VIX data unavailable.")
-
-with st.spinner("Syncing volatility regime..."):
-    uvxy_ind = compute_uvxy_vix_indicator()
-
-
-if "UVXY Score" in uvxy_ind:
-    st.markdown("### 🌪 UVXY Volatility Indicator")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("VIX", uvxy_ind["VIX"])
-    col2.metric("VIX Change (%)", uvxy_ind["VIX Change (%)"])
-    col3.metric("Term Structure", uvxy_ind["Term Structure"])
-
-    st.metric("Volatility Regime", uvxy_ind["Regime"])
-    st.metric("UVXY Score (0–100)", uvxy_ind["UVXY Score"])
-else:
-    st.info("VIX data unavailable.")
-
 # --- Sidebar universe controls ---
 st.sidebar.markdown("### ➕ Add Custom Stocks")
 
@@ -1283,11 +1129,9 @@ with tab_sentiment:
                 with col1:
                     st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
                 with col2:
-                    rsi_val = sentiment.get("metrics", {}).get("rsi_14", 50.0)
-                    st.metric("RSI (14 Daily)", rsi_val)
+                    st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
                 with col3:
-                    vol_val = sentiment.get("metrics", {}).get("volatility_ratio", 1.0)
-                    st.metric("Volatility Multiplier", f"{vol_val}x")
+                    st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
 
                 ticker_df = historical_data[selected_ticker].dropna()
                 close = ticker_df["Close"]
