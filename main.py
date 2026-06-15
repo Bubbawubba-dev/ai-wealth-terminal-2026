@@ -1546,6 +1546,43 @@ with tab_sentiment:
         else:
             st.warning("Selected ticker not found in historical data universe.")
 
+from momentum_engine import (
+    compute_entry_signals,
+    compute_exit_signals,
+    compute_momentum_quality,
+    classify_momentum_regime,
+)
+
+# df_price should be your OHLCV dataframe for the selected ticker
+df_price = load_price_data(ticker)  # your existing function
+
+df_price = compute_entry_signals(df_price)
+df_price = compute_exit_signals(df_price)
+df_price = compute_momentum_quality(df_price)
+
+# Last row = current signal
+last = df_price.iloc[-1]
+
+regime = classify_momentum_regime(last)
+
+technical_row = {
+    "Ticker": ticker,
+    "Close": last["Close"],
+    "SMA20": last["SMA20"],
+    "RSI5": last["RSI5"],
+    "ShockScore": last["ShockScore"],
+    "MomentumQualityScore": last["MomentumQualityScore"],
+    "Regime": regime,
+    "BreakoutEntry": bool(last["BreakoutEntry"]),
+    "PullbackEntry": bool(last["PullbackEntry"]),
+    "ReversalEntry": bool(last["ReversalEntry"]),
+    "ExitMomentumFade": bool(last["ExitMomentumFade"]),
+    "ExitTrendBreak": bool(last["ExitTrendBreak"]),
+    "ATRStop": last["ExitATRStop"],
+    "TrailStop": last["ExitTrailStop"],
+}
+
+
 # =========================================================
 # TAB 5: MACRO WEALTH & LONG-TERM INVESTMENT
 # =========================================================
