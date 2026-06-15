@@ -1305,90 +1305,38 @@ with tab_sentiment:
                     st.metric("Shock Score (Ticker)", ticker_shock_score)
 
                 ticker_df = historical_data[selected_ticker].dropna()
-                close = ticker_df["Close"]
-                high = ticker_df["High"]
-                low = ticker_df["Low"]
+                ticker_df = historical_data[selected_ticker].dropna()
 
-                delta = close.diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                rsi_series = 100 - (100 / (1 + rs))
+# ---------------------------------------------------------
+# APPLY MOMENTUM ENGINE HERE
+# ---------------------------------------------------------
+df_price = ticker_df.copy()
 
-                sma20 = close.rolling(20).mean()
+df_price = compute_entry_signals(df_price)
+df_price = compute_exit_signals(df_price)
+df_price = compute_momentum_quality(df_price)
 
-                tr = np.maximum(
-                    (high - low),
-                    np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))),
-                )
-                atr5 = tr.rolling(5).mean()
-                atr20 = tr.rolling(20).mean()
-                vol_ratio_series = atr5 / atr20
+last = df_price.iloc[-1]
+regime = classify_momentum_regime(last)
 
-                # Price + signals
-                fig_price = go.Figure()
-                fig_price.add_trace(
-                    go.Scatter(
-                        x=close.index,
-                        y=close,
-                        name="Close",
-                        line=dict(color="#38bdf8", width=2),
-                    )
-                )
-                fig_price.add_trace(
-                    go.Scatter(
-                        x=sma20.index,
-                        y=sma20,
-                        name="SMA20",
-                        line=dict(color="#f59e0b", dash="dash"),
-                    )
-                )
-
-                buy_signals = []
-                sell_signals = []
-
-                for i in range(1, len(close)):
-                    if (
-                        close.iloc[i] > sma20.iloc[i]
-                        and close.iloc[i - 1] <= sma20.iloc[i - 1]
-                        and rsi_series.iloc[i] > 50
-                        and vol_ratio_series.iloc[i] > 1.0
-                    ):
-                        buy_signals.append((close.index[i], close.iloc[i]))
-
-                    if (
-                        (close.iloc[i] < sma20.iloc[i] and close.iloc[i - 1] >= sma20.iloc[i - 1])
-                        or rsi_series.iloc[i] < 45
-                    ):
-                        sell_signals.append((close.index[i], close.iloc[i]))
-
-                for t, p in buy_signals:
-                    fig_price.add_annotation(
-                        x=t,
-                        y=p,
-                        text="⬆ BUY",
-                        showarrow=True,
-                        arrowhead=1,
-                        font=dict(color="#22c55e"),
-                    )
-
-                for t, p in sell_signals:
-                    fig_price.add_annotation(
-                        x=t,
-                        y=p,
-                        text="⬇ SELL",
-                        showarrow=True,
-                        arrowhead=1,
-                        font=dict(color="#ef4444"),
-                    )
-
-                fig_price.update_layout(
-                    title=f"{selected_ticker} — Price with Signals",
-                    template="plotly_dark",
-                    height=320,
-                )
-                st.plotly_chart(fig_price, use_container_width=True)
-
+# Build a technical row (optional for display)
+technical_row = {
+    "Ticker": selected_ticker,
+    "Close": last["Close"],
+    "SMA20": last["SMA20"],
+    "RSI5": last["RSI5"],
+    "ShockScore": last["ShockScore"],
+    "MomentumQualityScore": last["MomentumQualityScore"],
+    "Regime": regime,
+    "BreakoutEntry": bool(last["BreakoutEntry"]),
+    "PullbackEntry": bool(last["PullbackEntry"]),
+    "ReversalEntry": bool(last["ReversalEntry"]),
+    "ExitMomentumFade": bool(last["ExitMomentumFade"]),
+    "ExitTrendBreak": bool(last["ExitTrendBreak"]),
+    "ATRStop": last["ExitATRStop"],
+    "TrailStop": last["ExitTrailStop"],
+}
+# ---------------------------------------------------------
                 # RSI / Vol / Price views
                 fig_rsi = go.Figure()
                 fig_rsi.add_trace(
