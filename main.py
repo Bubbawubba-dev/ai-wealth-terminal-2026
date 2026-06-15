@@ -1302,7 +1302,7 @@ with tab_sentiment:
                     vol_val = sentiment.get("metrics", {}).get("volatility_ratio", 1.0)
                     st.metric("Volatility Multiplier", f"{vol_val}x")
                 with col4:
-                st.metric("Shock Score (Ticker)", ticker_shock_score)
+                    st.metric("Shock Score (Ticker)", ticker_shock_score)
 
                 ticker_df = historical_data[selected_ticker].dropna()
                 close = ticker_df["Close"]
