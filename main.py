@@ -1428,7 +1428,7 @@ with tab_sentiment:
                 fig_price2.add_trace(go.Scatter(x=sma20.index, y=sma20,
                                                 name="SMA20", line=dict(color="#f59e0b", dash="dash")))
                 fig_price2.update_layout(title=f"{selected_ticker} — Price vs SMA20",
-                                         template="plotly_dark", height=260
+                                         template="plotly_dark", height=260)
 
                  # -----------------------------
                 # VOLATILITY RATIO
