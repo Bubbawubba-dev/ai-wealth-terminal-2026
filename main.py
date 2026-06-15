@@ -1428,7 +1428,116 @@ with tab_sentiment:
                 fig_price2.add_trace(go.Scatter(x=sma20.index, y=sma20,
                                                 name="SMA20", line=dict(color="#f59e0b", dash="dash")))
                 fig_price2.update_layout(title=f"{selected_ticker} — Price vs SMA20",
-                                         template="plotly_dark", height=260# =========================================================
+                                         template="plotly_dark", height=260
+
+                 # -----------------------------
+                # VOLATILITY RATIO
+                # -----------------------------
+                fig_vol = go.Figure()
+                fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index, y=vol_ratio_series,
+                                             name="ATR5 / ATR20", line=dict(color="#ef4444", width=2)))
+                fig_vol.update_layout(title=f"{selected_ticker} — Volatility Ratio",
+                                      template="plotly_dark", height=230)
+
+                st.plotly_chart(fig_price2, use_container_width=True)
+                st.plotly_chart(fig_rsi, use_container_width=True)
+                st.plotly_chart(fig_vol, use_container_width=True)
+
+                # -----------------------------
+                # BACKTEST ENGINE
+                # -----------------------------
+                st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
+
+                returns = []
+                trade_lengths = []
+                position = None
+                entry_price = None
+                entry_index = None
+
+                for i in range(1, len(close)):
+                    if (
+                        position is None
+                        and close.iloc[i] > sma20.iloc[i]
+                        and rsi_series.iloc[i] > 50
+                        and vol_ratio_series.iloc[i] > 1.0
+                    ):
+                        position = "LONG"
+                        entry_price = close.iloc[i]
+                        entry_index = i
+
+                    elif position == "LONG" and (
+                        close.iloc[i] < sma20.iloc[i]
+                        or rsi_series.iloc[i] < 45
+                        or vol_ratio_series.iloc[i] < 0.8
+                    ):
+                        ret = (close.iloc[i] - entry_price) / entry_price
+                        returns.append(ret)
+                        if entry_index is not None:
+                            trade_lengths.append(i - entry_index)
+                        position = None
+
+                if returns:
+                    win_rate = 100 * sum(r > 0 for r in returns) / len(returns)
+                    avg_return = 100 * np.mean(returns)
+                    avg_len = np.mean(trade_lengths) if trade_lengths else 0
+                else:
+                    win_rate = 0
+                    avg_return = 0
+                    avg_len = 0
+
+                col_bt1, col_bt2, col_bt3 = st.columns(3)
+                with col_bt1:
+                    st.metric("Win Rate (%)", f"{win_rate:.1f}")
+                with col_bt2:
+                    st.metric("Avg Trade Return (%)", f"{avg_return:.2f}")
+                with col_bt3:
+                    st.metric("Avg Holding (bars)", f"{avg_len:.1f}")
+
+                # -----------------------------
+                # SIGNAL QUALITY + NARRATIVE
+                # -----------------------------
+                trend_phase = classify_structure(unified_signal(ticker_df))
+                signal_quality, narrative_lines, score_components = compute_signal_quality_and_narrative(
+                    close,
+                    sma20,
+                    rsi_series,
+                    vol_ratio_series,
+                    returns,
+                    win_rate,
+                    avg_return,
+                    trend_phase,
+                )
+
+                st.markdown("### 🧠 Signal Quality & Regime-Aware Narrative")
+                col_sq1, col_sq2, col_sq3, col_sq4, col_sq5 = st.columns(5)
+                with col_sq1:
+                    st.metric("Signal Quality", signal_quality)
+                with col_sq2:
+                    st.metric("Trend Score", score_components["trend_score"])
+                with col_sq3:
+                    st.metric("Momentum Score", score_components["momentum_score"])
+                with col_sq4:
+                    st.metric("Volatility Score", score_components["vol_score"])
+                with col_sq5:
+                    st.metric("Structure Score", score_components["structure_score"])
+
+                regime_lines = build_regime_aware_narrative(
+                    ticker_shock_score,      # market shock replaced
+                    ticker_shock_score,      # ticker shock
+                    trend_phase,
+                    sentiment["label"],
+                    signal_quality,
+                )
+
+                st.markdown("#### Regime-Aware Narrative")
+                for line in regime_lines:
+                    st.markdown(f"- {line}")
+
+            else:
+                st.error("Sentiment engine returned an error state.")
+        else:
+            st.warning("Selected ticker not found in historical data universe.")
+# =========================================================
 # TAB 5: MACRO WEALTH & LONG-TERM INVESTMENT
 # =========================================================
 
