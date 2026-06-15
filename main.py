@@ -1516,6 +1516,21 @@ with tab_sentiment:
                     st.metric("Structure Score", score_components["structure_score"])
 
                 regime_lines = build_regime_aware_narrative(
+                    ticker_shock_score,      # market shock replaced
+                    ticker_shock_score,      # ticker shock
+                    trend_phase,
+                    sentiment["label"],
+                    signal_quality,
+                )
+
+                st.markdown("#### Regime-Aware Narrative")
+                for line in regime_lines:
+                    st.markdown(f"- {line}")
+
+            else:
+                st.error("Sentiment engine returned an error state.")
+        else:
+            st.warning("Selected ticker not found in historical data universe.")
 # =========================================================
 # TAB 5: MACRO WEALTH & LONG-TERM INVESTMENT
 # =========================================================
