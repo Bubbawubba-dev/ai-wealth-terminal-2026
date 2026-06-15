@@ -283,6 +283,18 @@ def fetch_fundamental_metrics(tickers):
             }
     return fundamental_records
 
+def load_price_data(ticker):
+    df = yf.download(ticker, period="6mo", interval="1d")
+    df = df.dropna()
+    return df
+
+df = compute_entry_signals(df)
+df = compute_exit_signals(df)
+df = compute_momentum_quality(df)
+
+regime = classify_momentum_regime(df.iloc[-1])
+
+
 # =========================================================
 # 4. CORE TECHNICAL ENGINES
 # =========================================================
