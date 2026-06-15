@@ -1289,116 +1289,157 @@ with tab_sentiment:
         selected_ticker = st.selectbox("Select Target Engine Asset:", full_universe)
 
         if selected_ticker in historical_data.columns.get_level_values(0):
+
+            # -----------------------------
+            # SENTIMENT ENGINE
+            # -----------------------------
             sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
             if sentiment["status"] == "Active":
-                col1, col2, col3, col4 = st.columns(4)
+
+                # -----------------------------
+                # LOAD PRICE DATA
+                # -----------------------------
+                ticker_df = historical_data[selected_ticker].dropna()
+                close = ticker_df["Close"]
+                high = ticker_df["High"]
+                low = ticker_df["Low"]
+
+                # -----------------------------
+                # MOMENTUM ENGINE (NEW)
+                # -----------------------------
+                df_price = ticker_df.copy()
+                df_price = compute_entry_signals(df_price)
+                df_price = compute_exit_signals(df_price)
+                df_price = compute_momentum_quality(df_price)
+
+                last = df_price.iloc[-1]
+                regime = classify_momentum_regime(last)
+
+                # -----------------------------
+                # TICKER SHOCK SCORE (NEW)
+                # -----------------------------
+                intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
+                intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
+                ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
+                ticker_shock_score = ticker_shock_obj["shock_score"]
+
+                # -----------------------------
+                # TOP METRICS ROW
+                # -----------------------------
+                col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
                     st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
                 with col2:
-                    rsi_val = sentiment.get("metrics", {}).get("rsi_14", 50.0)
-                    st.metric("RSI (14 Daily)", rsi_val)
+                    st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
                 with col3:
-                    vol_val = sentiment.get("metrics", {}).get("volatility_ratio", 1.0)
-                    st.metric("Volatility Multiplier", f"{vol_val}x")
+                    st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
                 with col4:
-                    st.metric("Shock Score (Ticker)", ticker_shock_score)
+                    st.metric("Shock Score", ticker_shock_score)
+                with col5:
+                    st.metric("Momentum Regime", regime)
 
-                ticker_df = historical_data[selected_ticker].dropna()
-                ticker_df = historical_data[selected_ticker].dropna()
+                # -----------------------------
+                # RSI SERIES
+                # -----------------------------
+                delta = close.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                rsi_series = 100 - (100 / (1 + rs))
 
-# ---------------------------------------------------------
-# APPLY MOMENTUM ENGINE HERE
-# ---------------------------------------------------------
-df_price = ticker_df.copy()
+                sma20 = close.rolling(20).mean()
 
-df_price = compute_entry_signals(df_price)
-df_price = compute_exit_signals(df_price)
-df_price = compute_momentum_quality(df_price)
-
-last = df_price.iloc[-1]
-regime = classify_momentum_regime(last)
-
-# Build a technical row (optional for display)
-technical_row = {
-    "Ticker": selected_ticker,
-    "Close": last["Close"],
-    "SMA20": last["SMA20"],
-    "RSI5": last["RSI5"],
-    "ShockScore": last["ShockScore"],
-    "MomentumQualityScore": last["MomentumQualityScore"],
-    "Regime": regime,
-    "BreakoutEntry": bool(last["BreakoutEntry"]),
-    "PullbackEntry": bool(last["PullbackEntry"]),
-    "ReversalEntry": bool(last["ReversalEntry"]),
-    "ExitMomentumFade": bool(last["ExitMomentumFade"]),
-    "ExitTrendBreak": bool(last["ExitTrendBreak"]),
-    "ATRStop": last["ExitATRStop"],
-    "TrailStop": last["ExitTrailStop"],
-}
-# ---------------------------------------------------------
-                # RSI / Vol / Price views
-                fig_rsi = go.Figure()
-                fig_rsi.add_trace(
-                    go.Scatter(
-                        x=rsi_series.index,
-                        y=rsi_series,
-                        mode="lines",
-                        name="RSI 14",
-                        line=dict(color="#38bdf8", width=2),
-                    )
+                tr = np.maximum(
+                    (high - low),
+                    np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))),
                 )
+                atr5 = tr.rolling(5).mean()
+                atr20 = tr.rolling(20).mean()
+                vol_ratio_series = atr5 / atr20
+
+                # -----------------------------
+                # PRICE CHART WITH SIGNALS
+                # -----------------------------
+                fig_price = go.Figure()
+                fig_price.add_trace(go.Scatter(x=close.index, y=close, name="Close",
+                                               line=dict(color="#38bdf8", width=2)))
+                fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20, name="SMA20",
+                                               line=dict(color="#f59e0b", dash="dash")))
+
+                # BUY / SELL SIGNALS
+                buy_signals = []
+                sell_signals = []
+
+                for i in range(1, len(close)):
+                    if (
+                        close.iloc[i] > sma20.iloc[i]
+                        and close.iloc[i - 1] <= sma20.iloc[i - 1]
+                        and rsi_series.iloc[i] > 50
+                        and vol_ratio_series.iloc[i] > 1.0
+                    ):
+                        buy_signals.append((close.index[i], close.iloc[i]))
+
+                    if (
+                        (close.iloc[i] < sma20.iloc[i] and close.iloc[i - 1] >= sma20.iloc[i - 1])
+                        or rsi_series.iloc[i] < 45
+                    ):
+                        sell_signals.append((close.index[i], close.iloc[i]))
+
+                for t, p in buy_signals:
+                    fig_price.add_annotation(x=t, y=p, text="⬆ BUY", showarrow=True,
+                                             arrowhead=1, font=dict(color="#22c55e"))
+
+                for t, p in sell_signals:
+                    fig_price.add_annotation(x=t, y=p, text="⬇ SELL", showarrow=True,
+                                             arrowhead=1, font=dict(color="#ef4444"))
+
+                fig_price.update_layout(
+                    title=f"{selected_ticker} — Price with Signals",
+                    template="plotly_dark",
+                    height=320,
+                )
+                st.plotly_chart(fig_price, use_container_width=True)
+
+                # -----------------------------
+                # RSI CHART
+                # -----------------------------
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
+                                             mode="lines", name="RSI 14",
+                                             line=dict(color="#38bdf8", width=2)))
                 fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
                 fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-                fig_rsi.update_layout(
-                    title=f"{selected_ticker} — RSI (14)",
-                    template="plotly_dark",
-                    height=230,
-                )
+                fig_rsi.update_layout(title=f"{selected_ticker} — RSI (14)",
+                                      template="plotly_dark", height=230)
 
+                # -----------------------------
+                # PRICE VS SMA20
+                # -----------------------------
                 fig_price2 = go.Figure()
-                fig_price2.add_trace(
-                    go.Scatter(
-                        x=close.index,
-                        y=close,
-                        name="Close",
-                        line=dict(color="#38bdf8", width=2),
-                    )
-                )
-                fig_price2.add_trace(
-                    go.Scatter(
-                        x=sma20.index,
-                        y=sma20,
-                        name="SMA20",
-                        line=dict(color="#f59e0b", dash="dash"),
-                    )
-                )
-                fig_price2.update_layout(
-                    title=f"{selected_ticker} — Price vs SMA20",
-                    template="plotly_dark",
-                    height=260,
-                )
+                fig_price2.add_trace(go.Scatter(x=close.index, y=close,
+                                                name="Close", line=dict(color="#38bdf8", width=2)))
+                fig_price2.add_trace(go.Scatter(x=sma20.index, y=sma20,
+                                                name="SMA20", line=dict(color="#f59e0b", dash="dash")))
+                fig_price2.update_layout(title=f"{selected_ticker} — Price vs SMA20",
+                                         template="plotly_dark", height=260)
 
+                # -----------------------------
+                # VOLATILITY RATIO
+                # -----------------------------
                 fig_vol = go.Figure()
-                fig_vol.add_trace(
-                    go.Scatter(
-                        x=vol_ratio_series.index,
-                        y=vol_ratio_series,
-                        name="ATR5 / ATR20",
-                        line=dict(color="#ef4444", width=2),
-                    )
-                )
-                fig_vol.update_layout(
-                    title=f"{selected_ticker} — Volatility Ratio",
-                    template="plotly_dark",
-                    height=230,
-                )
+                fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index, y=vol_ratio_series,
+                                             name="ATR5 / ATR20", line=dict(color="#ef4444", width=2)))
+                fig_vol.update_layout(title=f"{selected_ticker} — Volatility Ratio",
+                                      template="plotly_dark", height=230)
 
                 st.plotly_chart(fig_price2, use_container_width=True)
                 st.plotly_chart(fig_rsi, use_container_width=True)
                 st.plotly_chart(fig_vol, use_container_width=True)
 
-                # Simple backtest (10–30 day swing)
+                # -----------------------------
+                # BACKTEST ENGINE
+                # -----------------------------
                 st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
                 returns = []
@@ -1446,6 +1487,9 @@ technical_row = {
                 with col_bt3:
                     st.metric("Avg Holding (bars)", f"{avg_len:.1f}")
 
+                # -----------------------------
+                # SIGNAL QUALITY + NARRATIVE
+                # -----------------------------
                 trend_phase = classify_structure(unified_signal(ticker_df))
                 signal_quality, narrative_lines, score_components = compute_signal_quality_and_narrative(
                     close,
@@ -1457,12 +1501,6 @@ technical_row = {
                     avg_return,
                     trend_phase,
                 )
-
-                # Ticker shock for regime-aware narrative
-                intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
-                intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
-                ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
-                ticker_shock_score = ticker_shock_obj["shock_score"]
 
                 st.markdown("### 🧠 Signal Quality & Regime-Aware Narrative")
                 col_sq1, col_sq2, col_sq3, col_sq4, col_sq5 = st.columns(5)
@@ -1478,59 +1516,6 @@ technical_row = {
                     st.metric("Structure Score", score_components["structure_score"])
 
                 regime_lines = build_regime_aware_narrative(
-                    ticker_shock_score,
-                    ticker_shock_score,
-                    trend_phase,
-                    sentiment["label"],
-                    signal_quality,
-                )
-
-                st.markdown("#### Regime-Aware Narrative")
-                for line in regime_lines:
-                    st.markdown(f"- {line}")
-
-            else:
-                st.error("Sentiment engine returned an error state.")
-        else:
-            st.warning("Selected ticker not found in historical data universe.")
-
-from momentum_engine import (
-    compute_entry_signals,
-    compute_exit_signals,
-    compute_momentum_quality,
-    classify_momentum_regime,
-)
-
-# df_price should be your OHLCV dataframe for the selected ticker
-df_price = load_price_data(ticker)  # your existing function
-
-df_price = compute_entry_signals(df_price)
-df_price = compute_exit_signals(df_price)
-df_price = compute_momentum_quality(df_price)
-
-# Last row = current signal
-last = df_price.iloc[-1]
-
-regime = classify_momentum_regime(last)
-
-technical_row = {
-    "Ticker": ticker,
-    "Close": last["Close"],
-    "SMA20": last["SMA20"],
-    "RSI5": last["RSI5"],
-    "ShockScore": last["ShockScore"],
-    "MomentumQualityScore": last["MomentumQualityScore"],
-    "Regime": regime,
-    "BreakoutEntry": bool(last["BreakoutEntry"]),
-    "PullbackEntry": bool(last["PullbackEntry"]),
-    "ReversalEntry": bool(last["ReversalEntry"]),
-    "ExitMomentumFade": bool(last["ExitMomentumFade"]),
-    "ExitTrendBreak": bool(last["ExitTrendBreak"]),
-    "ATRStop": last["ExitATRStop"],
-    "TrailStop": last["ExitTrailStop"],
-}
-
-
 # =========================================================
 # TAB 5: MACRO WEALTH & LONG-TERM INVESTMENT
 # =========================================================
