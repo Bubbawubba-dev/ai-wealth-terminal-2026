@@ -1292,7 +1292,7 @@ with tab_sentiment:
             sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
             if sentiment["status"] == "Active":
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
                 with col2:
@@ -1301,6 +1301,8 @@ with tab_sentiment:
                 with col3:
                     vol_val = sentiment.get("metrics", {}).get("volatility_ratio", 1.0)
                     st.metric("Volatility Multiplier", f"{vol_val}x")
+                with col4:
+                st.metric("Shock Score (Ticker)", ticker_shock_score)
 
                 ticker_df = historical_data[selected_ticker].dropna()
                 close = ticker_df["Close"]
@@ -1528,7 +1530,7 @@ with tab_sentiment:
                     st.metric("Structure Score", score_components["structure_score"])
 
                 regime_lines = build_regime_aware_narrative(
-                    market_shock,
+                    ticker_shock_score,
                     ticker_shock_score,
                     trend_phase,
                     sentiment["label"],
