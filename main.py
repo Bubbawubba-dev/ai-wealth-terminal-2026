@@ -288,11 +288,11 @@ def load_price_data(ticker):
     df = df.dropna()
     return df
 
-df = compute_entry_signals(df)
-df = compute_exit_signals(df)
-df = compute_momentum_quality(df)
+    df = compute_entry_signals(df)
+    df = compute_exit_signals(df)
+    df = compute_momentum_quality(df)
 
-regime = classify_momentum_regime(df.iloc[-1])
+    regime = classify_momentum_regime(df.iloc[-1])
 
 
 # =========================================================
