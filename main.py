@@ -9,22 +9,10 @@ from zoneinfo import ZoneInfo
 # =========================================================
 # MOMENTUM ENGINE STUBS (Replace with actual module when available)
 # =========================================================
-def compute_entry_signals(df):
-    """Stub: Add entry signal logic here"""
-    return df
-
-def compute_exit_signals(df):
-    """Stub: Add exit signal logic here"""
-    return df
-
-def compute_momentum_quality(df):
-    """Stub: Add momentum quality logic here"""
-    return df
-
-def classify_momentum_regime(row):
-    """Stub: Classify momentum regime from row data"""
-    return "Neutral"
-
+from momentum_engine_v2 import (
+    analyze_ticker,
+    EngineConfig
+)
 
 # =========================================================
 # 1. CONFIGURATION & STYLING
@@ -302,16 +290,10 @@ def fetch_fundamental_metrics(tickers):
             }
     return fundamental_records
 
-def load_price_data(ticker):
-    df = yf.download(ticker, period="6mo", interval="1d")
+def load_daily_ohlcv(ticker):
+    df = yf.download(ticker, period="1y", interval="1d")
     df = df.dropna()
-    
-    df = compute_entry_signals(df)
-    df = compute_exit_signals(df)
-    df = compute_momentum_quality(df)
-
-    regime = classify_momentum_regime(df.iloc[-1])
-    
+    df = df.rename(columns=str.title)  # Ensure Open/High/Low/Close/Volume
     return df
 
 
@@ -1310,6 +1292,66 @@ with tab_sentiment:
 
         if selected_ticker in historical_data.columns.get_level_values(0):
 
+            engine_choice = st.toggle("Use Momentum Engine v2", value=True)
+
+if engine_choice:
+    # === Momentum Engine v2 ===
+    daily = load_daily_ohlcv(selected_ticker)
+
+    results = analyze_ticker(
+        daily=daily,
+        h4=None,
+        h1=None,
+        equity=100_000,
+        cfg=EngineConfig()
+    )
+
+    mqs = results["mqs"].iloc[-1]
+    phase = results["phase"].iloc[-1]
+    entry = results["entry_signal"].iloc[-1]
+    exit_ = results["exit_signal"].iloc[-1]
+    long_ok = results["long_ok"].iloc[-1]
+    narrative = results["narrative"].iloc[-1]
+
+else:
+    # === Legacy Engine v1 ===
+    ticker_df = historical_data[selected_ticker].dropna()
+    close = ticker_df["Close"]
+    high = ticker_df["High"]
+    low = ticker_df["Low"]
+
+    # Your existing v1 logic
+    df_price = compute_entry_signals(ticker_df)
+    df_price = compute_exit_signals(df_price)
+    df_price = compute_momentum_quality(df_price)
+    last = df_price.iloc[-1]
+    phase = classify_momentum_regime(last)
+
+    mqs = last.get("MomentumQuality", 0)
+    entry = bool(last.get("EntrySignal", False))
+    exit_ = bool(last.get("ExitSignal", False))
+    long_ok = entry and not exit_
+    narrative = "Legacy engine active — no narrative available."
+
+# === Momentum Engine v2 Integration ===
+
+daily = load_daily_ohlcv(selected_ticker)
+
+results = analyze_ticker(
+    daily=daily,
+    h4=None,
+    h1=None,
+    equity=100_000,
+    cfg=EngineConfig()
+)
+
+mqs = results["mqs"].iloc[-1]
+phase = results["phase"].iloc[-1]
+entry = results["entry_signal"].iloc[-1]
+exit_ = results["exit_signal"].iloc[-1]
+long_ok = results["long_ok"].iloc[-1]
+narrative = results["narrative"].iloc[-1]
+
             # -----------------------------
             # SENTIMENT ENGINE
             # -----------------------------
@@ -1328,13 +1370,11 @@ with tab_sentiment:
                 # -----------------------------
                 # MOMENTUM ENGINE
                 # -----------------------------
-                df_price = ticker_df.copy()
-                df_price = compute_entry_signals(df_price)
-                df_price = compute_exit_signals(df_price)
-                df_price = compute_momentum_quality(df_price)
+                from momentum_engine_v2 import (
+                    analyze_ticker,
+                    EngineConfig
+                )
 
-                last = df_price.iloc[-1]
-                regime = classify_momentum_regime(last)
 
                 # -----------------------------
                 # TICKER SHOCK SCORE
@@ -1347,17 +1387,64 @@ with tab_sentiment:
                 # -----------------------------
                 # TOP METRICS ROW
                 # -----------------------------
-                col1, col2, col3, col4, col5 = st.columns(5)
+                
+                if engine_choice:
+    # === Momentum Engine v2 ===
+    daily = load_daily_ohlcv(selected_ticker)
+
+    results = analyze_ticker(
+        daily=daily,
+        h4=None,
+        h1=None,
+        equity=100_000,
+        cfg=EngineConfig()
+    )
+
+    mqs = results["mqs"].iloc[-1]
+    phase = results["phase"].iloc[-1]
+    entry = results["entry_signal"].iloc[-1]
+    exit_ = results["exit_signal"].iloc[-1]
+    long_ok = results["long_ok"].iloc[-1]
+    narrative = results["narrative"].iloc[-1]
+
+else:
+    # === Legacy Engine v1 ===
+    ticker_df = historical_data[selected_ticker].dropna()
+    close = ticker_df["Close"]
+    high = ticker_df["High"]
+    low = ticker_df["Low"]
+
+    # Your existing v1 logic
+    df_price = compute_entry_signals(ticker_df)
+    df_price = compute_exit_signals(df_price)
+    df_price = compute_momentum_quality(df_price)
+    last = df_price.iloc[-1]
+    phase = classify_momentum_regime(last)
+
+    mqs = last.get("MomentumQuality", 0)
+    entry = bool(last.get("EntrySignal", False))
+    exit_ = bool(last.get("ExitSignal", False))
+    long_ok = entry and not exit_
+    narrative = "Legacy engine active — no narrative available."
+
+
+                col1, col2, col3, col4 = st.columns(4)
+
                 with col1:
-                    st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
+                    st.metric("MQS", f"{mqs:.1f}")
+
                 with col2:
-                    st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
+                    st.metric("Phase", phase)
+
                 with col3:
-                    st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
+                    st.metric("Entry Signal", "Yes" if entry else "No")
+
                 with col4:
-                    st.metric("Shock Score", ticker_shock_score)
-                with col5:
-                    st.metric("Momentum Regime", regime)
+                    st.metric("Exit Signal", "Yes" if exit_ else "No")
+
+                st.write("### AI Narrative")
+                st.write(narrative)
+
 
                 # -----------------------------
                 # RSI SERIES
