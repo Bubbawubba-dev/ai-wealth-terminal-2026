@@ -6,13 +6,24 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from momentum_engine import (
-    compute_entry_signals,
-    compute_exit_signals,
-    compute_momentum_quality,
-    classify_momentum_regime,
-)
+# =========================================================
+# MOMENTUM ENGINE STUBS (Replace with actual module when available)
+# =========================================================
+def compute_entry_signals(df):
+    """Stub: Add entry signal logic here"""
+    return df
 
+def compute_exit_signals(df):
+    """Stub: Add exit signal logic here"""
+    return df
+
+def compute_momentum_quality(df):
+    """Stub: Add momentum quality logic here"""
+    return df
+
+def classify_momentum_regime(row):
+    """Stub: Classify momentum regime from row data"""
+    return "Neutral"
 
 
 # =========================================================
