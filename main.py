@@ -294,13 +294,14 @@ def fetch_fundamental_metrics(tickers):
 def load_price_data(ticker):
     df = yf.download(ticker, period="6mo", interval="1d")
     df = df.dropna()
-    return df
-
+    
     df = compute_entry_signals(df)
     df = compute_exit_signals(df)
     df = compute_momentum_quality(df)
 
     regime = classify_momentum_regime(df.iloc[-1])
+    
+    return df
 
 
 # =========================================================
@@ -1431,7 +1432,7 @@ with tab_sentiment:
                 fig_price2.update_layout(title=f"{selected_ticker} — Price vs SMA20",
                                          template="plotly_dark", height=260)
 
-                 # -----------------------------
+                # -----------------------------
                 # VOLATILITY RATIO
                 # -----------------------------
                 fig_vol = go.Figure()
@@ -1523,8 +1524,8 @@ with tab_sentiment:
                     st.metric("Structure Score", score_components["structure_score"])
 
                 regime_lines = build_regime_aware_narrative(
-                    ticker_shock_score,      # market shock replaced
-                    ticker_shock_score,      # ticker shock
+                    market_shock,
+                    ticker_shock_score,
                     trend_phase,
                     sentiment["label"],
                     signal_quality,
