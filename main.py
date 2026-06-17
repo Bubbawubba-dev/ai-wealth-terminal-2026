@@ -758,21 +758,6 @@ def pullback_scanner(df_history, universe):
         return pd.DataFrame()
     return pd.DataFrame(rows).sort_values(by="Distance to 38.2%", ascending=True)
 
-def breakout_confirmation(close, high, volume, rsi_series, breakout_level, i):
-    # 1. Full candle close above breakout
-    cond_close = close[i] > breakout_level and close[i-1] <= breakout_level
-
-    # 2. Rising volume
-    vol_now = volume[i]
-    vol_avg = volume[i-20:i].mean()
-    cond_volume = vol_now > vol_avg * 1.2
-
-    # 3. RSI > 50
-    cond_rsi = rsi_series[i] > 50
-
-    return cond_close and cond_volume and cond_rsi
-
-
 # =========================================================
 # 6. SIGNAL QUALITY & REGIME-AWARE NARRATIVE
 # =========================================================
@@ -960,124 +945,7 @@ def build_regime_aware_narrative(
 # 7. AI ENGINE FOR SHORT-TERM TRADING
 # =========================================================
 
-def build_ai_stock_selection_table(
-df_history,
-intraday_snapshots,
-universe,
-fundamental_data,
-market_shock_index=None,
-):
-    """
-    AI Stock Selection Engine (patched):
-    - Uses per-ticker shock score from compute_ticker_shock
-    - Still allows market_shock_index to be displayed separately if you want
-    """
-    rows = []
-
-    if df_history is None or df_history.empty:
-        return pd.DataFrame()
-
-    available_tickers = df_history.columns.get_level_values(0).unique()
-
-    for ticker in universe:
-        try:
-            if ticker not in available_tickers:
-                continue
-
-            daily_df = df_history[ticker].dropna()
-            if len(daily_df) < 50:
-                continue
-
-            # --- Core metrics ---
-            close = daily_df["Close"]
-            current_price = float(close.iloc[-1])
-
-            # Factor scores (existing engine)
-            fundamentals = fundamental_data.get(
-                ticker,
-                {"P/E Ratio": "N/A", "Profit Margin": "N/A"},
-            )
-            factor_scores = compute_factor_scores(df_history, ticker, fundamentals)
-            if factor_scores is None:
-                continue
-
-            # Short-term momentum
-            short_term = compute_short_term_momentum(daily_df)
-
-            # Intraday + ticker-specific shock
-            intraday_df = intraday_snapshots.get(ticker)
-            daily_tail = daily_df.tail(60)
-            shock = compute_ticker_shock(intraday_df, daily_tail)
-
-            # Sentiment
-            sentiment = calculate_advanced_sentiment(df_history, ticker)
-
-            # --- AI Score construction ---
-            # Base from composite factor score
-            base_score = factor_scores["Composite"]
-
-            # Adjust for short-term momentum
-            st_boost = np.interp(
-                short_term["3D"],
-                [-5, 0, 5, 10],
-                [-10, 0, 10, 18],
-            )
-
-            # Adjust for ticker-specific shock (NOT market shock)
-            # High shock_score => more stress => slight penalty
-            shock_adj = np.interp(
-                shock["shock_score"],
-                [40, 70, 100],
-                [1.0, 0.9, 0.75],
-            )
-
-            # Sentiment tilt
-            sent_score = sentiment.get("score", 50)
-            sent_adj = np.interp(
-                sent_score,
-                [20, 40, 60, 80],
-                [-10, -3, 3, 10],
-            )
-
-            ai_score_raw = (base_score + st_boost + sent_adj) * shock_adj
-            ai_score = round(float(np.clip(ai_score_raw, 0, 100)), 1)
-
-            rows.append(
-                {
-                    "Ticker": ticker,
-                    "Price": round(current_price, 2),
-                    "1M Return (%)": round(factor_scores["1M"], 2),
-                    "3M Return (%)": round(factor_scores["3M"], 2),
-                    "6M Return (%)": round(factor_scores["6M"], 2),
-                    "Trend Score": factor_scores["Trend"],
-                    "Stability": round(factor_scores["Stability"], 2),
-                    "Quality": round(factor_scores["Quality"], 2),
-                    "Value": round(factor_scores["Value"], 4),
-                    "Short-Term 3D (%)": short_term["3D"],
-                    "Short-Term 5D (%)": short_term["5D"],
-                    "RSI5": short_term["RSI5"],
-                    # 🔥 Ticker-specific shock, not market shock:
-                    "Shock Score": shock["shock_score"],
-                    "Intraday Return (%)": shock["intraday_return_pct"],
-                    "Daily Vol (%)": shock["daily_vol_pct"],
-                    "Shock Z-Score": shock["shock_z"],
-                    # Sentiment
-                    "Sentiment Score": sent_score,
-                    "Sentiment Label": sentiment.get("label", "Neutral"),
-                    # Final AI score
-                    "AI Score": ai_score,
-                }
-            )
-
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    df_ai = pd.DataFrame(rows)
-    return df_ai.sort_values(by="AI Score", ascending=False)
-
+def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
     rows = []
     if df_history.empty:
         return pd.DataFrame()
