@@ -1010,7 +1010,6 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
-        "Signal quality Engine",
     ]
 )
 
@@ -1384,99 +1383,3 @@ with tab_ai:
             st.info("AI engine did not find any qualified candidates (check data coverage and universe).")
     else:
         st.error("Historical data unavailable.")
-
-# =========================================================
-#  TAB 7 — SIGNAL QUALITY ENGINE v13.0
-# =========================================================
-
-with tab_signal:
-    st.subheader("🧠 Signal Quality Engine v13.0")
-
-    selected_ticker = st.selectbox("Select Ticker for Signal Analysis:", universe)
-
-    if historical_data.empty:
-        st.error("Historical data unavailable.")
-        st.stop()
-
-    # --- Extract ticker data ---
-    ticker_df = historical_data[selected_ticker].dropna()
-    close = ticker_df["Close"]
-    high = ticker_df["High"]
-    low = ticker_df["Low"]
-
-    # --- Indicators ---
-    sma20 = close.rolling(20).mean()
-
-    delta = close.diff()
-    gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    rsi_series = 100 - (100 / (1 + rs))
-
-    tr = np.maximum(
-        (high - low),
-        np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1)))
-    )
-    atr5 = tr.rolling(5).mean()
-    atr20 = tr.rolling(20).mean()
-    vol_ratio_series = atr5 / atr20
-
-    # --- Backtest (same logic as Sentiment Tab) ---
-    returns = []
-    position = None
-    entry_price = None
-
-    for i in range(1, len(close)):
-        if (
-            position is None and
-            close.iloc[i] > sma20.iloc[i] and
-            rsi_series.iloc[i] > 50 and
-            vol_ratio_series.iloc[i] > 1.0
-        ):
-            position = "LONG"
-            entry_price = close.iloc[i]
-
-        elif (
-            position == "LONG" and (
-                close.iloc[i] < sma20.iloc[i] or
-                rsi_series.iloc[i] < 45 or
-                vol_ratio_series.iloc[i] < 0.8
-            )
-        ):
-            ret = (close.iloc[i] - entry_price) / entry_price
-            returns.append(ret)
-            position = None
-            entry_price = None
-
-    avg_return = np.mean(returns) * 100 if returns else 0.0
-    win_rate = (np.sum(np.array(returns) > 0) / len(returns)) * 100 if returns else 0.0
-
-    # --- Trend Phase ---
-    sig = unified_signal(ticker_df)
-    trend_phase = classify_structure(sig)
-
-    # --- Compute v13.0 Signal Quality ---
-    signal_quality, narrative_lines, factor_scores = compute_signal_quality_and_narrative(
-        close=close,
-        sma20=sma20,
-        rsi_series=rsi_series,
-        vol_ratio_series=vol_ratio_series,
-        returns=returns,
-        win_rate=win_rate,
-        avg_return=avg_return,
-        trend_phase=trend_phase
-    )
-
-    # --- Display Metrics ---
-    st.metric("Signal Quality Score", f"{signal_quality}/100")
-    st.metric("Trend Phase", trend_phase)
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: st.metric("Trend Score", factor_scores["trend_score"])
-    with c2: st.metric("Momentum Score", factor_scores["momentum_score"])
-    with c3: st.metric("Volatility Score", factor_scores["vol_score"])
-    with c4: st.metric("Backtest Score", factor_scores["backtest_score"])
-    with c5: st.metric("Structure Score", factor_scores["structure_score"])
-
-    st.markdown("### Narrative Summary")
-    st.write("• " + "\n• ".join(narrative_lines))
