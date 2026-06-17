@@ -290,12 +290,12 @@ def fetch_fundamental_metrics(tickers):
             }
     return fundamental_records
 
-
 def load_daily_ohlcv(ticker):
     df = yf.download(ticker, period="1y", interval="1d")
     df = df.dropna()
     df = df.rename(columns=str.title)  # Ensure Open/High/Low/Close/Volume
     return df
+
 
 # =========================================================
 # 4. CORE TECHNICAL ENGINES
@@ -947,50 +947,148 @@ def build_regime_aware_narrative(
     return lines
 
 # =========================================================
-# 7. TRADE READINESS SCORE (TRS)
+# 7. REWRITTEN AI ENGINE FOR SHORT-TERM TRADING
 # =========================================================
 
-def compute_trade_readiness_score(
-    signal_quality: float,
-    market_shock: float,
-    ticker_shock: float,
-    sentiment_score: float,
-) -> float:
-    """
-    Trade Readiness Score (0–100):
-    - High when signal quality + sentiment are strong and stress is moderate.
-    """
-    # Normalize stress as a penalty (higher shock -> lower readiness)
-    market_penalty = np.interp(market_shock, [0, 50, 100], [1.0, 0.9, 0.7])
-    ticker_penalty = np.interp(ticker_shock, [0, 50, 100], [1.0, 0.9, 0.7])
+def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
+    rows = []
+    if df_history.empty:
+        return pd.DataFrame()
 
-    sentiment_component = np.interp(sentiment_score, [0, 50, 100], [30, 60, 90])
+    available = df_history.columns.get_level_values(0).unique()
+    intraday_snap = fetch_intraday_snapshot(list(available))
 
-    base = 0.55 * signal_quality + 0.35 * sentiment_component + 10
-    trs = base * market_penalty * ticker_penalty
-    return float(np.clip(trs, 0, 100))
+    for ticker in universe:
+        if ticker not in available:
+            continue
 
+        try:
+            df = df_history[ticker].dropna()
+            if len(df) < 80:
+                continue
 
-def render_trs_gauge(trs_value: float):
-    fig = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=trs_value,
-            title={"text": "Trade Readiness Score"},
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#22c55e"},
-                "steps": [
-                    {"range": [0, 30], "color": "#7f1d1d"},
-                    {"range": [30, 60], "color": "#92400e"},
-                    {"range": [60, 80], "color": "#166534"},
-                    {"range": [80, 100], "color": "#22c55e"},
-                ],
-            },
-        )
+            intraday_df = intraday_snap.get(ticker, pd.DataFrame())
+            if intraday_df.empty:
+                intraday_df = df.tail(5)
+
+            daily_tail = df.tail(30)
+            shock = compute_ticker_shock(intraday_df, daily_tail)
+
+            st_mom = compute_short_term_momentum(df)
+            st_levels = compute_short_term_levels(df)
+
+            sig = unified_signal(df)
+            structure = classify_structure(sig)
+
+            sentiment = calculate_advanced_sentiment(df_history, ticker)
+            sent_score = sentiment.get("score", 50)
+
+            fundamentals = fundamental_cache.get(
+                ticker,
+                {
+                    "Market Cap": "N/A",
+                    "P/E Ratio": "N/A",
+                    "Profit Margin": "N/A",
+                },
+            )
+            factor = compute_factor_scores(df_history, ticker, fundamentals)
+            if factor is None:
+                continue
+
+            tactical_block = (
+                np.interp(st_mom["1D"], [-6, 0, 3], [20, 60, 90]) * 0.25
+                + np.interp(st_mom["3D"], [-10, 0, 6], [20, 60, 90]) * 0.20
+                + np.interp(st_mom["VolAccel"], [0.5, 1, 2], [30, 60, 95]) * 0.30
+                + np.interp(st_mom["RSI5"], [20, 50, 80], [20, 60, 90]) * 0.25
+            )
+
+            shock_adj = np.interp(shock["shock_score"], [40, 70, 100], [1.0, 0.9, 0.75])
+            tactical_block *= shock_adj
+
+            swing_block = sent_score * 0.6 + np.clip(factor["Composite"], 0, 100) * 0.4
+
+            structural_block = (
+                np.interp(factor["6M"], [-20, 0, 30], [25, 55, 90]) * 0.4
+                + (10 * factor["Trend"] + 20 * factor["Stability"]) * 0.3
+                + factor["Quality"] * 0.3
+            )
+
+            ai_score = 0.55 * tactical_block + 0.30 * swing_block + 0.15 * structural_block
+            ai_score = float(np.clip(ai_score, 0, 100))
+
+            price = float(df["Close"].iloc[-1])
+            atr20 = float(
+                np.maximum(
+                    (df["High"] - df["Low"]),
+                    np.maximum(abs(df["High"] - df["Close"].shift(1)), abs(df["Low"] - df["Close"].shift(1))),
+                )
+                .rolling(20)
+                .mean()
+                .iloc[-1]
+            )
+
+            entry = round(price - 0.5 * atr20, 2)
+            stop = round(price - 1.2 * atr20, 2)
+            target = round(price + 1.5 * atr20, 2)
+
+            rows.append(
+                {
+                    "Ticker": ticker,
+                    "Price": round(price, 2),
+                    "AI Score": round(ai_score, 1),
+                    "Shock Score": shock["shock_score"],
+                    "Intraday Return (%)": shock["intraday_return_pct"],
+                    "1D Return (%)": st_mom["1D"],
+                    "3D Return (%)": st_mom["3D"],
+                    "5D Return (%)": st_mom["5D"],
+                    "Volume Accel (x)": st_mom["VolAccel"],
+                    "RSI(5)": st_mom["RSI5"],
+                    "Structure": structure,
+                    "Sentiment Score": sent_score,
+                    "3M Return (%)": round(factor["3M"], 2),
+                    "Stability": round(factor["Stability"], 2),
+                    "Quality": round(factor["Quality"], 2),
+                    "Value": round(factor["Value"], 4),
+                    "Market Cap": fundamentals["Market Cap"],
+                    "P/E Ratio": fundamentals["P/E Ratio"],
+                    "Profit Margin": fundamentals["Profit Margin"],
+                    "Breakout Level": st_levels["Breakout"],
+                    "Pullback 38.2%": st_levels["Pullback_382"],
+                    "Pullback 61.8%": st_levels["Pullback_618"],
+                    "Entry Level": entry,
+                    "Stop Level": stop,
+                    "Target Level": target,
+                }
+            )
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows).sort_values(by="AI Score", ascending=False).reset_index(drop=True)
+
+def build_top_picks_today(ai_df, breakout_df, pullback_df, momentum_df, macro_df):
+    if ai_df.empty:
+        return pd.DataFrame()
+
+    df = ai_df.copy()
+
+    df["Breakout_Flag"] = df["Ticker"].isin(breakout_df["Ticker"])
+    df["Pullback_Flag"] = df["Ticker"].isin(pullback_df["Ticker"])
+    df["Momentum_Flag"] = df["Ticker"].isin(momentum_df["Ticker"])
+    df["Macro_Flag"] = df["Ticker"].isin(macro_df["Ticker"])
+
+    df["CompositeRank"] = (
+        df["AI Score"] * 0.50 +
+        df["Breakout_Flag"].astype(int) * 15 +
+        df["Pullback_Flag"].astype(int) * 15 +
+        df["Momentum_Flag"].astype(int) * 10 +
+        df["Macro_Flag"].astype(int) * 10
     )
-    fig.update_layout(height=260, template="plotly_dark", margin=dict(l=10, r=10, t=40, b=10))
-    st.plotly_chart(fig, use_container_width=True)
+
+    df = df.sort_values(by="CompositeRank", ascending=False)
+    return df.head(10)
 
 # =========================================================
 # 8. USER INTERFACE
@@ -1042,6 +1140,7 @@ else:
 with st.spinner("Syncing volatility regime..."):
     uvxy_ind = compute_uvxy_vix_indicator()
 
+
 if "UVXY Score" in uvxy_ind:
     st.markdown("### 🌪 UVXY Volatility Indicator")
 
@@ -1092,6 +1191,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
     tab_pullback,
     tab_sentiment,
     tab_macro,
+    tab_ai,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -1099,8 +1199,101 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "📉 Pullback Scanner",
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
+        "🤖 AI Stock Selection Engine",
     ]
 )
+
+    def compute_trade_readiness_score(mqs, phase, entry, exit_, long_ok, daily_df):
+    # Phase scoring
+    phase_map = {
+        "Ignition": 100,
+        "Expansion": 85,
+        "Climax": 40,
+        "Exhaustion": 25,
+        "Failure": 10,
+        "Neutral": 50,
+    }
+    phase_score = phase_map.get(phase, 50)
+
+    # Entry alignment
+    entry_score = 100 if entry else 40
+    if exit_:
+        entry_score = 10
+
+    # Volatility safety (ATR%)
+    atr14 = (daily_df["High"] - daily_df["Low"]).rolling(14).mean()
+    atr_pct = (atr14 / daily_df["Close"] * 100).iloc[-1]
+    if atr_pct < 3:
+        vol_score = 100
+    elif atr_pct < 5:
+        vol_score = 70
+    elif atr_pct < 7:
+        vol_score = 40
+    else:
+        vol_score = 15
+
+    # Weighted composite
+    trs = (
+        0.40 * mqs +
+        0.20 * phase_score +
+        0.20 * entry_score +
+        0.20 * vol_score
+    )
+
+    return round(trs, 1)
+
+def get_trs_style(trs):
+    if trs >= 85:
+        color = "#22c55e"   # green
+        label = "Prime Setup"
+    elif trs >= 70:
+        color = "#3b82f6"   # blue
+        label = "Good Setup"
+    elif trs >= 55:
+        color = "#eab308"   # yellow
+        label = "Developing"
+    elif trs >= 40:
+        color = "#f97316"   # orange
+        label = "Weak"
+    else:
+        color = "#ef4444"   # red
+        label = "Avoid"
+    return color, label
+
+def render_trs_gauge(trs):
+    color, label = get_trs_style(trs)
+
+    st.markdown(f"""
+    <div style="
+        background: #0f172a;
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid #1e293b;
+        margin-top: 10px;
+    ">
+        <div style="font-size: 18px; font-weight: 600; margin-bottom: 6px;">
+            Trade Readiness Score: <span style="color:{color}">{trs}</span> — {label}
+        </div>
+
+        <div style="
+            width: 100%;
+            height: 16px;
+            background: #1e293b;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #334155;
+        ">
+            <div style="
+                width: {trs}%;
+                height: 100%;
+                background: {color};
+                box-shadow: 0 0 12px {color};
+                transition: width 0.6s ease-out;
+            "></div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 # =========================================================
 # TAB 1: SHORT-TERM MOMENTUM
@@ -1144,20 +1337,25 @@ with tab_pullback:
 
         if not df_pullback.empty:
 
+            # Auto-highlighting logic
             def highlight_pullback(row):
                 price = row["Price"]
                 pb382 = row["Pullback 38.2%"]
                 pb618 = row["Pullback 61.8%"]
 
+                # Strong trend pullback (near 38.2%)
                 if abs(price - pb382) <= abs(pb618 - pb382) * 0.25:
                     return ["background-color: #14532d; color: white"] * len(row)
 
+                # Deep dip reversal (near 61.8%)
                 if abs(price - pb618) <= abs(pb618 - pb382) * 0.25:
                     return ["background-color: #1e3a8a; color: white"] * len(row)
 
+                # Trend may be failing (below 61.8%)
                 if price < pb618:
                     return ["background-color: #7f1d1d; color: white"] * len(row)
 
+                # Neutral zone
                 return [""] * len(row)
 
             st.dataframe(
@@ -1172,7 +1370,7 @@ with tab_pullback:
         st.error("Historical data unavailable.")
 
 # =========================================================
-# TAB 4: TECHNICAL SENTIMENT (REGIME-AWARE) + TRS GAUGE
+# TAB 4: TECHNICAL SENTIMENT (REGIME-AWARE)
 # =========================================================
 
 with tab_sentiment:
@@ -1183,278 +1381,225 @@ with tab_sentiment:
     else:
         selected_ticker = st.selectbox("Select Target Engine Asset:", full_universe)
 
-        if selected_ticker in historical_data.columns.get_level_values(0):
-
-            engine_choice = st.toggle("Use Momentum Engine v2", value=True)
-            show_trs_gauge = st.toggle("Show Trade Readiness Score gauge", value=True)
-
-            # -----------------------------
-            # SENTIMENT ENGINE
-            # -----------------------------
-            sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
-
-            if sentiment["status"] == "Active":
-                ticker_df = historical_data[selected_ticker].dropna()
-                close = ticker_df["Close"]
-                high = ticker_df["High"]
-                low = ticker_df["Low"]
-
-                # -----------------------------
-                # MOMENTUM ENGINE (v2 or legacy)
-                # -----------------------------
-                if engine_choice:
-                    daily = load_daily_ohlcv(selected_ticker)
-                    results = analyze_ticker(
-                        daily=daily,
-                        h4=None,
-                        h1=None,
-                        equity=100_000,
-                        cfg=EngineConfig()
-                    )
-
-                    mqs = results["mqs"].iloc[-1]
-                    phase = results["phase"].iloc[-1]
-                    entry = results["entry_signal"].iloc[-1]
-                    exit_ = results["exit_signal"].iloc[-1]
-                    long_ok = results["long_ok"].iloc[-1]
-                    narrative = results["narrative"].iloc[-1]
-                else:
-                    # Legacy v1 placeholder
-                    mqs = 0.0
-                    phase = classify_structure(unified_signal(ticker_df))
-                    entry = False
-                    exit_ = False
-                    long_ok = False
-                    narrative = "Legacy engine active — no narrative available."
-
-                # -----------------------------
-                # TICKER SHOCK SCORE
-                # -----------------------------
-                intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
-                intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
-                ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
-                ticker_shock_score = ticker_shock_obj["shock_score"]
-
-                # -----------------------------
-                # TOP METRICS ROW
-                # -----------------------------
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("MQS", f"{mqs:.1f}")
-                with col2:
-                    st.metric("Phase", phase)
-                with col3:
-                    st.metric("Entry Signal", "Yes" if entry else "No")
-                with col4:
-                    st.metric("Exit Signal", "Yes" if exit_ else "No")
-
-                st.write("### AI Narrative")
-                st.write(narrative)
-
-                # -----------------------------
-                # RSI SERIES & VOL RATIO
-                # -----------------------------
-                delta = close.diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                rsi_series = 100 - (100 / (1 + rs))
-
-                sma20 = close.rolling(20).mean()
-
-                tr = np.maximum(
-                    (high - low),
-                    np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))),
-                )
-                atr5 = tr.rolling(5).mean()
-                atr20 = tr.rolling(20).mean()
-                vol_ratio_series = atr5 / atr20
-
-                # -----------------------------
-                # PRICE CHART WITH SIGNALS
-                # -----------------------------
-                fig_price = go.Figure()
-                fig_price.add_trace(go.Scatter(x=close.index, y=close, name="Close",
-                                               line=dict(color="#38bdf8", width=2)))
-                fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20, name="SMA20",
-                                               line=dict(color="#f59e0b", dash="dash")))
-
-                buy_signals = []
-                sell_signals = []
-
-                for i in range(1, len(close)):
-                    if (
-                        close.iloc[i] > sma20.iloc[i]
-                        and close.iloc[i - 1] <= sma20.iloc[i - 1]
-                        and rsi_series.iloc[i] > 50
-                        and vol_ratio_series.iloc[i] > 1.0
-                    ):
-                        buy_signals.append((close.index[i], close.iloc[i]))
-
-                    if (
-                        (close.iloc[i] < sma20.iloc[i] and close.iloc[i - 1] >= sma20.iloc[i - 1])
-                        or rsi_series.iloc[i] < 45
-                    ):
-                        sell_signals.append((close.index[i], close.iloc[i]))
-
-                for t, p in buy_signals:
-                    fig_price.add_annotation(x=t, y=p, text="⬆ BUY", showarrow=True,
-                                             arrowhead=1, font=dict(color="#22c55e"))
-
-                for t, p in sell_signals:
-                    fig_price.add_annotation(x=t, y=p, text="⬇ SELL", showarrow=True,
-                                             arrowhead=1, font=dict(color="#ef4444"))
-
-                fig_price.update_layout(
-                    title=f"{selected_ticker} — Price with Signals",
-                    template="plotly_dark",
-                    height=320,
-                )
-                st.plotly_chart(fig_price, use_container_width=True)
-
-                # -----------------------------
-                # RSI CHART
-                # -----------------------------
-                fig_rsi = go.Figure()
-                fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
-                                             mode="lines", name="RSI 14",
-                                             line=dict(color="#38bdf8", width=2)))
-                fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
-                fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
-                fig_rsi.update_layout(title=f"{selected_ticker} — RSI (14)",
-                                      template="plotly_dark", height=230)
-
-                # -----------------------------
-                # PRICE VS SMA20
-                # -----------------------------
-                fig_price2 = go.Figure()
-                fig_price2.add_trace(go.Scatter(x=close.index, y=close,
-                                                name="Close", line=dict(color="#38bdf8", width=2)))
-                fig_price2.add_trace(go.Scatter(x=sma20.index, y=sma20,
-                                                name="SMA20", line=dict(color="#f59e0b", dash="dash")))
-                fig_price2.update_layout(title=f"{selected_ticker} — Price vs SMA20",
-                                         template="plotly_dark", height=260)
-
-                # -----------------------------
-                # VOLATILITY RATIO
-                # -----------------------------
-                fig_vol = go.Figure()
-                fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index, y=vol_ratio_series,
-                                             name="ATR5 / ATR20", line=dict(color="#ef4444", width=2)))
-                fig_vol.update_layout(title=f"{selected_ticker} — Volatility Ratio",
-                                      template="plotly_dark", height=230)
-
-                st.plotly_chart(fig_price2, use_container_width=True)
-                st.plotly_chart(fig_rsi, use_container_width=True)
-                st.plotly_chart(fig_vol, use_container_width=True)
-
-                # -----------------------------
-                # BACKTEST ENGINE
-                # -----------------------------
-                st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
-
-                returns = []
-                trade_lengths = []
-                position = None
-                entry_price = None
-                entry_index = None
-
-                for i in range(1, len(close)):
-                    if (
-                        position is None
-                        and close.iloc[i] > sma20.iloc[i]
-                        and rsi_series.iloc[i] > 50
-                        and vol_ratio_series.iloc[i] > 1.0
-                    ):
-                        position = "LONG"
-                        entry_price = close.iloc[i]
-                        entry_index = i
-
-                    elif position == "LONG" and (
-                        close.iloc[i] < sma20.iloc[i]
-                        or rsi_series.iloc[i] < 45
-                        or vol_ratio_series.iloc[i] < 0.8
-                    ):
-                        ret = (close.iloc[i] - entry_price) / entry_price
-                        returns.append(ret)
-                        if entry_index is not None:
-                            trade_lengths.append(i - entry_index)
-                        position = None
-
-                if returns:
-                    win_rate = 100 * sum(r > 0 for r in returns) / len(returns)
-                    avg_return = 100 * np.mean(returns)
-                    avg_len = np.mean(trade_lengths) if trade_lengths else 0
-                else:
-                    win_rate = 0
-                    avg_return = 0
-                    avg_len = 0
-
-                col_bt1, col_bt2, col_bt3 = st.columns(3)
-                with col_bt1:
-                    st.metric("Win Rate (%)", f"{win_rate:.1f}")
-                with col_bt2:
-                    st.metric("Avg Trade Return (%)", f"{avg_return:.2f}")
-                with col_bt3:
-                    st.metric("Avg Holding (bars)", f"{avg_len:.1f}")
-
-                # -----------------------------
-                # SIGNAL QUALITY + NARRATIVE
-                # -----------------------------
-                trend_phase = classify_structure(unified_signal(ticker_df))
-                signal_quality, narrative_lines, score_components = compute_signal_quality_and_narrative(
-                    close,
-                    sma20,
-                    rsi_series,
-                    vol_ratio_series,
-                    returns,
-                    win_rate,
-                    avg_return,
-                    trend_phase,
-                )
-
-                st.markdown("### 🧠 Signal Quality & Regime-Aware Narrative")
-                col_sq1, col_sq2, col_sq3, col_sq4, col_sq5 = st.columns(5)
-                with col_sq1:
-                    st.metric("Signal Quality", signal_quality)
-                with col_sq2:
-                    st.metric("Trend Score", score_components["trend_score"])
-                with col_sq3:
-                    st.metric("Momentum Score", score_components["momentum_score"])
-                with col_sq4:
-                    st.metric("Volatility Score", score_components["vol_score"])
-                with col_sq5:
-                    st.metric("Structure Score", score_components["structure_score"])
-
-                regime_lines = build_regime_aware_narrative(
-                    market_shock,
-                    ticker_shock_score,
-                    trend_phase,
-                    sentiment["label"],
-                    signal_quality,
-                )
-
-                st.markdown("#### Regime-Aware Narrative")
-                for line in regime_lines:
-                    st.markdown(f"- {line}")
-
-                # -----------------------------
-                # TRADE READINESS SCORE GAUGE
-                # -----------------------------
-                if show_trs_gauge:
-                    trs_value = compute_trade_readiness_score(
-                        signal_quality=signal_quality,
-                        market_shock=market_shock,
-                        ticker_shock=ticker_shock_score,
-                        sentiment_score=sentiment["score"],
-                    )
-                    st.markdown("### 🎯 Trade Readiness Score")
-                    render_trs_gauge(trs_value)
-
-            else:
-                st.error("Sentiment engine returned an error state.")
-        else:
+        if selected_ticker not in historical_data.columns.get_level_values(0):
             st.warning("Selected ticker not found in historical data universe.")
+            st.stop()
+
+        # --- Engine Toggle ---
+        engine_choice = st.toggle("Use Momentum Engine v2", value=True)
+
+        # --- Run Engine ---
+        if engine_choice:
+            # === Momentum Engine v2 ===
+            daily = load_daily_ohlcv(selected_ticker)
+
+            results = analyze_ticker(
+                daily=daily,
+                h4=None,
+                h1=None,
+                equity=100_000,
+                cfg=EngineConfig()
+            )
+
+            mqs = results["mqs"].iloc[-1]
+            phase = results["phase"].iloc[-1]
+            entry = results["entry_signal"].iloc[-1]
+            exit_ = results["exit_signal"].iloc[-1]
+            long_ok = results["long_ok"].iloc[-1]
+            narrative = results["narrative"].iloc[-1]
+
+        else:
+            # === Legacy Engine v1 ===
+            ticker_df = historical_data[selected_ticker].dropna()
+
+            df_price = compute_entry_signals(ticker_df)
+            df_price = compute_exit_signals(df_price)
+            df_price = compute_momentum_quality(df_price)
+            last = df_price.iloc[-1]
+
+            mqs = last.get("MomentumQuality", 0)
+            phase = classify_momentum_regime(last)
+            entry = bool(last.get("EntrySignal", False))
+            exit_ = bool(last.get("ExitSignal", False))
+            long_ok = entry and not exit_
+            narrative = "Legacy engine active — no narrative available."
+
+        # Compute Trade Readiness Score
+        trs = compute_trade_readiness_score(
+            mqs=mqs,
+            phase=phase,
+            entry=entry,
+            exit_=exit_,
+            long_ok=long_ok,
+            daily_df=daily
+        )
+
+        # --- Display Metrics ---
+        col1, col2, col3, col4, col5 = st.columns(5)
+
+        with col1:
+            st.metric("MQS", f"{mqs:.1f}")
+
+        with col2:
+            st.metric("Phase", phase)
+
+        with col3:
+            st.metric("Entry", "Yes" if entry else "No")
+
+        with col4:
+            st.metric("Exit", "Yes" if exit_ else "No")
+
+        with col5:
+            st.metric("Trade Readiness", f"{trs:.1f}")
+
+        if long_ok:
+            st.success("🔥 High‑Quality Long Setup Detected")
+        else:
+            st.warning("⚠️ No high‑probability setup right now")
+
+        st.write("### AI Narrative")
+        st.write(narrative)
+
+        # --- Sentiment Engine ---
+        sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
+
+        if sentiment["status"] != "Active":
+            st.error("Sentiment engine returned an error state.")
+            st.stop()
+
+        ticker_df = historical_data[selected_ticker].dropna()
+        close = ticker_df["Close"]
+        high = ticker_df["High"]
+        low = ticker_df["Low"]
+
+        # --- RSI Series ---
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        rsi_series = 100 - (100 / (1 + rs))
+
+        sma20 = close.rolling(20).mean()
+
+        tr = np.maximum(
+            (high - low),
+            np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))),
+        )
+        atr5 = tr.rolling(5).mean()
+        atr20 = tr.rolling(20).mean()
+        vol_ratio_series = atr5 / atr20
+
+        # --- Ticker Shock ---
+        intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
+        intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
+        ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
+        ticker_shock_score = ticker_shock_obj["shock_score"]
+
+        # --- Price Chart ---
+        fig_price = go.Figure()
+        fig_price.add_trace(go.Scatter(x=close.index, y=close, name="Close",
+                                       line=dict(color="#38bdf8", width=2)))
+        fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20, name="SMA20",
+                                       line=dict(color="#f59e0b", dash="dash")))
+
+        st.plotly_chart(fig_price, use_container_width=True)
+
+        # --- RSI Chart ---
+        fig_rsi = go.Figure()
+        fig_rsi.add_trace(go.Scatter(x=rsi_series.index, y=rsi_series,
+                                     mode="lines", name="RSI 14",
+                                     line=dict(color="#38bdf8", width=2)))
+        fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
+        fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
+        fig_rsi.update_layout(template="plotly_dark", height=230)
+
+        st.plotly_chart(fig_rsi, use_container_width=True)
+
+        # --- Volatility Chart ---
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Scatter(x=vol_ratio_series.index, y=vol_ratio_series,
+                                     name="ATR5 / ATR20", line=dict(color="#ef4444", width=2)))
+        fig_vol.update_layout(template="plotly_dark", height=230)
+
+        st.plotly_chart(fig_vol, use_container_width=True)
+
+        # --- Backtest ---
+        st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
+
+        returns = []
+        trade_lengths = []
+        position = None
+        entry_price = None
+        entry_index = None
+
+        for i in range(1, len(close)):
+            if (
+                position is None
+                and close.iloc[i] > sma20.iloc[i]
+                and rsi_series.iloc[i] > 50
+                and vol_ratio_series.iloc[i] > 1.0
+            ):
+                position = "LONG"
+                entry_price = close.iloc[i]
+                entry_index = i
+
+            elif position == "LONG" and (
+                close.iloc[i] < sma20.iloc[i]
+                or rsi_series.iloc[i] < 45
+                or vol_ratio_series.iloc[i] < 0.8
+            ):
+                ret = (close.iloc[i] - entry_price) / entry_price
+                returns.append(ret)
+                if entry_index is not None:
+                    trade_lengths.append(i - entry_index)
+                position = None
+
+        if returns:
+            win_rate = 100 * sum(r > 0 for r in returns) / len(returns)
+            avg_return = 100 * np.mean(returns)
+            avg_len = np.mean(trade_lengths) if trade_lengths else 0
+        else:
+            win_rate = 0
+            avg_return = 0
+            avg_len = 0
+
+        col_bt1, col_bt2, col_bt3 = st.columns(3)
+        col_bt1.metric("Win Rate (%)", f"{win_rate:.1f}")
+        col_bt2.metric("Avg Trade Return (%)", f"{avg_return:.2f}")
+        col_bt3.metric("Avg Holding (bars)", f"{avg_len:.1f}")
+
+        # --- Signal Quality ---
+        trend_phase = classify_structure(unified_signal(ticker_df))
+        signal_quality, narrative_lines, score_components = compute_signal_quality_and_narrative(
+            close,
+            sma20,
+            rsi_series,
+            vol_ratio_series,
+            returns,
+            win_rate,
+            avg_return,
+            trend_phase,
+        )
+
+        st.markdown("### 🧠 Signal Quality & Regime-Aware Narrative")
+        col_sq1, col_sq2, col_sq3, col_sq4, col_sq5 = st.columns(5)
+        col_sq1.metric("Signal Quality", signal_quality)
+        col_sq2.metric("Trend Score", score_components["trend_score"])
+        col_sq3.metric("Momentum Score", score_components["momentum_score"])
+        col_sq4.metric("Volatility Score", score_components["vol_score"])
+        col_sq5.metric("Structure Score", score_components["structure_score"])
+
+        regime_lines = build_regime_aware_narrative(
+            market_shock,
+            ticker_shock_score,
+            trend_phase,
+            sentiment["label"],
+            signal_quality,
+        )
+
+        st.markdown("#### Regime-Aware Narrative")
+        for line in regime_lines:
+            st.markdown(f"- {line}")
 
 # =========================================================
 # TAB 5: MACRO WEALTH & LONG-TERM INVESTMENT
@@ -1468,5 +1613,44 @@ with tab_macro:
             st.dataframe(macro_df, use_container_width=True, hide_index=True)
         else:
             st.info("No macro structures available for current universe (insufficient history).")
+    else:
+        st.error("Historical data unavailable.")
+
+# =========================================================
+# TAB 6: AI STOCK SELECTION ENGINE
+# =========================================================
+
+with tab_ai:
+    st.subheader("🤖 AI Stock Selection Engine — Short-Term Tactical Focus")
+    if not historical_data.empty:
+        ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
+        if not ai_df.empty:
+            st.dataframe(ai_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("AI engine did not find any qualified candidates (check data coverage and universe).")
+    else:
+        st.error("Historical data unavailable.")
+
+tab_top_picks = st.tabs(["🔥 Top Picks Today"])[0]
+
+with tab_top_picks:
+    st.subheader("🔥 Top Picks Today — Multi‑Engine Consensus")
+
+    if not historical_data.empty:
+        ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
+        breakout_df = breakout_radar(historical_data, full_universe)
+        pullback_df = pullback_scanner(historical_data, full_universe)
+        momentum_df = calculate_momentum_metrics(historical_data, full_universe)
+        macro_df = calculate_macro_trends(historical_data, full_universe, fundamental_cache)
+
+        top_picks = build_top_picks_today(ai_df, breakout_df, pullback_df, momentum_df, macro_df)
+
+        if not top_picks.empty:
+            st.dataframe(top_picks, use_container_width=True, hide_index=True)
+
+            st.markdown("### 🏆 Auto‑Selected Best 3 Trades")
+            st.dataframe(top_picks.head(3), use_container_width=True, hide_index=True)
+        else:
+            st.info("No top picks available today.")
     else:
         st.error("Historical data unavailable.")
