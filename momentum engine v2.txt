@@ -1,0 +1,226 @@
+import numpy as np
+import pandas as pd
+
+# ---------- Helper functions ----------
+
+def _safe_rolling(series, window, func="mean"):
+    if func == "mean":
+        return series.rolling(window=window, min_periods=window).mean()
+    if func == "std":
+        return series.rolling(window=window, min_periods=window).std()
+    return series
+
+def compute_atr(df, period=14):
+    high_low = df["High"] - df["Low"]
+    high_close = (df["High"] - df["Close"].shift(1)).abs()
+    low_close = (df["Low"] - df["Close"].shift(1)).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.rolling(window=period, min_periods=period).mean()
+    return atr
+
+def compute_rsi(close, period=14):
+    delta = close.diff()
+    gain = np.where(delta > 0, delta, 0.0)
+    loss = np.where(delta < 0, -delta, 0.0)
+    gain_ema = pd.Series(gain).ewm(alpha=1/period, adjust=False).mean()
+    loss_ema = pd.Series(loss).ewm(alpha=1/period, adjust=False).mean()
+    rs = gain_ema / (loss_ema + 1e-9)
+    rsi = 100 - (100 / (1 + rs))
+    return pd.Series(rsi, index=close.index)
+
+# ---------- Shock engine (ticker‑level) ----------
+
+def compute_ticker_shock(df, vol_window=20, vol_weight=0.5, atr_weight=0.3, gap_weight=0.2):
+    """
+    Returns a per‑row Shock Score (0–100) based on:
+    - intraday volatility vs baseline
+    - ATR expansion
+    - gap size vs ATR
+    """
+    atr = compute_atr(df, period=14)
+    df["ATR"] = atr
+
+    intraday_vol = (df["High"] - df["Low"])
+    base_vol = _safe_rolling(intraday_vol, vol_window, func="mean")
+    vol_ratio = (intraday_vol / (base_vol + 1e-9)).clip(lower=0, upper=5)
+
+    atr_base = _safe_rolling(atr, vol_window, func="mean")
+    atr_ratio = (atr / (atr_base + 1e-9)).clip(lower=0, upper=5)
+
+    gap = (df["Open"] - df["Close"].shift(1)).abs()
+    gap_ratio = (gap / (atr + 1e-9)).clip(lower=0, upper=5)
+
+    raw = (
+        vol_weight * vol_ratio +
+        atr_weight * atr_ratio +
+        gap_weight * gap_ratio
+    )
+
+    # Normalize to 0–100
+    shock = (raw / raw.max()) * 100
+    return shock.fillna(0)
+
+# ---------- Momentum regime classifier ----------
+
+def classify_momentum_regime(row):
+    """
+    Uses SMA5, SMA20, SMA50, RSI(5), ShockScore to classify regime.
+    """
+    sma5 = row.get("SMA5")
+    sma20 = row.get("SMA20")
+    sma50 = row.get("SMA50")
+    rsi5 = row.get("RSI5")
+    shock = row.get("ShockScore")
+
+    # Strong expansion
+    if sma5 > sma20 > sma50 and rsi5 is not None and rsi5 > 55 and shock is not None and shock > 40:
+        return "Expansion"
+
+    # Exhaustion
+    if rsi5 is not None and rsi5 > 85 and shock is not None and shock > 70:
+        return "Exhaustion"
+
+    # Pullback
+    if sma20 is not None and row["Close"] <= sma20 * 1.02 and row["Close"] >= sma20 * 0.98 and shock is not None and shock < 40:
+        return "Pullback"
+
+    # Breakdown
+    if sma20 is not None and row["Close"] < sma20 and shock is not None and shock > 50:
+        return "Breakdown"
+
+    return "Neutral"
+
+# ---------- Entry signal engine ----------
+
+def compute_entry_signals(df):
+    """
+    Adds columns:
+    - BreakoutEntry
+    - PullbackEntry
+    - ReversalEntry
+    """
+    df = df.copy()
+
+    df["PrevHigh"] = df["High"].shift(1)
+    df["RSI5"] = compute_rsi(df["Close"], period=5)
+    df["ShockScore"] = compute_ticker_shock(df)
+
+    # Simple SMAs
+    df["SMA5"] = _safe_rolling(df["Close"], 5)
+    df["SMA10"] = _safe_rolling(df["Close"], 10)
+    df["SMA20"] = _safe_rolling(df["Close"], 20)
+    df["SMA50"] = _safe_rolling(df["Close"], 50)
+
+    breakout = (
+        (df["Close"] > df["PrevHigh"]) &
+        (df["Volume"] > 2 * _safe_rolling(df["Volume"], 20)) &
+        (df["RSI5"] > 60) &
+        (df["ShockScore"] > 60)
+    )
+
+    pullback = (
+        (df["Close"] <= df["SMA20"] * 1.02) &
+        (df["Close"] >= df["SMA20"] * 0.98) &
+        (df["Volume"] < 0.7 * _safe_rolling(df["Volume"], 20)) &
+        (df["RSI5"].between(40, 55)) &
+        (df["ShockScore"] < 40)
+    )
+
+    hammer = (
+        ((df["Close"] > df["Open"]) &  # green candle
+         ((df["Low"] < df["Close"] - (df["High"] - df["Low"]) * 0.6)))  # long lower shadow
+    )
+
+    reversal = (
+        hammer &
+        (df["Volume"] > 1.5 * _safe_rolling(df["Volume"], 20)) &
+        (df["RSI5"] < 35)
+    )
+
+    df["BreakoutEntry"] = breakout
+    df["PullbackEntry"] = pullback
+    df["ReversalEntry"] = reversal
+
+    return df
+
+# ---------- Exit engine ----------
+
+def compute_exit_signals(df):
+    """
+    Adds columns:
+    - ExitMomentumFade
+    - ExitATRStop
+    - ExitTrendBreak
+    - ExitTrailStop
+    """
+    df = df.copy()
+
+    df["ATR"] = compute_atr(df, period=14)
+    df["RSI5"] = compute_rsi(df["Close"], period=5)
+    df["ShockScore"] = df.get("ShockScore", compute_ticker_shock(df))
+    df["SMA10"] = _safe_rolling(df["Close"], 10)
+
+    # Momentum fade
+    fade = (
+        (df["RSI5"].shift(1) > 70) &
+        (df["RSI5"] < 70) &
+        (df["ShockScore"].shift(1) > 60) &
+        (df["ShockScore"] < 40)
+    )
+
+    # ATR stop (you’d apply this to live position price)
+    df["ATRStop"] = df["Close"] - df["ATR"] * 1.2
+
+    # Trend break
+    trend_break = df["Close"] < df["SMA10"]
+
+    # Trail stop (1× ATR behind price)
+    df["TrailStop"] = df["Close"] - df["ATR"]
+
+    df["ExitMomentumFade"] = fade
+    df["ExitATRStop"] = df["ATRStop"]
+    df["ExitTrendBreak"] = trend_break
+    df["ExitTrailStop"] = df["TrailStop"]
+
+    return df
+
+# ---------- Momentum quality score ----------
+
+def compute_momentum_quality(df):
+    """
+    Returns a 0–100 MomentumQualityScore per row.
+    Components:
+    - Volume quality (0–30)
+    - Trend alignment (0–30)
+    - Volatility expansion (0–20)
+    - ShockScore (0–20)
+    """
+    df = df.copy()
+
+    vol_base = _safe_rolling(df["Volume"], 20)
+    vol_ratio = (df["Volume"] / (vol_base + 1e-9)).clip(lower=0, upper=3)
+    vol_score = (vol_ratio / 3) * 30
+
+    df["SMA5"] = _safe_rolling(df["Close"], 5)
+    df["SMA20"] = _safe_rolling(df["Close"], 20)
+    df["SMA50"] = _safe_rolling(df["Close"], 50)
+
+    trend_score = 0
+    trend_score_series = pd.Series(0, index=df.index)
+    trend_score_series += (df["SMA5"] > df["SMA20"]) * 10
+    trend_score_series += (df["SMA20"] > df["SMA50"]) * 10
+    trend_score_series += (df["Close"] > df["SMA20"]) * 10
+
+    atr = compute_atr(df, period=14)
+    atr_base = _safe_rolling(atr, 20)
+    atr_ratio = (atr / (atr_base + 1e-9)).clip(lower=0, upper=3)
+    vol_exp_score = (atr_ratio / 3) * 20
+
+    shock = df.get("ShockScore", compute_ticker_shock(df))
+    shock_norm = (shock.clip(lower=0, upper=100) / 100) * 20
+
+    total = vol_score + trend_score_series + vol_exp_score + shock_norm
+    total = total.clip(lower=0, upper=100)
+
+    df["MomentumQualityScore"] = total
+    return df
