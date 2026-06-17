@@ -960,15 +960,12 @@ def build_regime_aware_narrative(
 # 7. AI ENGINE FOR SHORT-TERM TRADING
 # =========================================================
 
-def build_ai_stock_selection_table(df_history, universe, fundamental_data, market_shock_index=None,
-):
-
-    def build_ai_stock_selection_table(
-    df_history,
-    intraday_snapshots,
-    universe,
-    fundamental_data,
-    market_shock_index=None,
+def build_ai_stock_selection_table(
+df_history,
+intraday_snapshots,
+universe,
+fundamental_data,
+market_shock_index=None,
 ):
     """
     AI Stock Selection Engine (patched):
