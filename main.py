@@ -1010,6 +1010,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
+        "Signal quality Engine",
     ]
 )
 
@@ -1385,7 +1386,7 @@ with tab_ai:
         st.error("Historical data unavailable.")
 
 # =========================================================
-# 8. TAB 7 — SIGNAL QUALITY ENGINE v13.0
+#  TAB 7 — SIGNAL QUALITY ENGINE v13.0
 # =========================================================
 
 with tab_signal:
