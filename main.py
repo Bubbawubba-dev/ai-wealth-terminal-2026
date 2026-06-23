@@ -1659,35 +1659,141 @@ with tab_macro:
         st.error("Historical data unavailable.")
 
 # =========================================================
-# TAB 6: AI STOCK SELECTION ENGINE
+# TAB 6: MOMENTUM ENGINE v2 DASHBOARD (REPLACES AI TAB)
 # =========================================================
 
 with tab_ai:
-    st.subheader("🤖 AI Stock Selection Engine")
+    st.subheader("⚡ Momentum Engine v2 — Multi‑Factor Trade Intelligence")
 
     if historical_data.empty:
         st.error("Historical data unavailable.")
-    else:
-        with st.spinner("Building AI stock selection table..."):
-            ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
-            breakout_df = breakout_radar(historical_data, full_universe)
-            pullback_df = pullback_scanner(historical_data, full_universe)
-            momentum_df = calculate_momentum_metrics(historical_data, full_universe)
-            macro_df = calculate_macro_trends(historical_data, full_universe, fundamental_cache)
+        st.stop()
 
-        if ai_df.empty:
-            st.warning("No AI-ranked candidates available for current universe.")
-        else:
-            st.markdown("### Top AI-Ranked Candidates")
-            st.dataframe(ai_df, use_container_width=True, hide_index=True)
+    # --- Engine Mode ---
+    st.markdown("### ⚙️ Engine Configuration")
+    preset = st.radio(
+        "Select Engine Mode:",
+        ["Balanced", "Aggressive", "Conservative"],
+        horizontal=True,
+    )
 
-            st.markdown("### 🔝 Top Picks Today (Composite)")
-            top_picks = build_top_picks_today(ai_df, breakout_df, pullback_df, momentum_df, macro_df)
-            if not top_picks.empty:
-                st.dataframe(top_picks, use_container_width=True, hide_index=True)
-            else:
-                st.info("No composite top picks available today.")
+    if preset == "Balanced":
+        cfg = EngineConfig()
+    elif preset == "Aggressive":
+        cfg = EngineConfig(
+            momentum_weight=1.3,
+            volatility_weight=0.7,
+            trend_weight=1.2,
+            risk_weight=0.8,
+        )
+    else:  # Conservative
+        cfg = EngineConfig(
+            momentum_weight=0.8,
+            volatility_weight=1.2,
+            trend_weight=1.0,
+            risk_weight=1.3,
+        )
 
+    st.markdown("### 📊 Scanning Universe for High‑Quality Setups…")
+
+    # --- Multi‑Ticker Scan ---
+    scan_results = []
+    for ticker in full_universe:
+        try:
+            daily = load_daily_ohlcv(ticker)
+            if daily.empty or len(daily) < 50:
+                continue
+
+            res = analyze_ticker(
+                daily=daily,
+                h4=None,
+                h1=None,
+                equity=100_000,
+                cfg=cfg,
+            )
+
+            scan_results.append({
+                "Ticker": ticker,
+                "MQS": res["mqs"].iloc[-1],
+                "Phase": res["phase"].iloc[-1],
+                "Entry": res["entry_signal"].iloc[-1],
+                "Exit": res["exit_signal"].iloc[-1],
+                "Long OK": res["long_ok"].iloc[-1],
+                "Narrative": res["narrative"].iloc[-1],
+            })
+        except Exception:
+            continue
+
+    if not scan_results:
+        st.warning("No valid tickers found for Momentum Engine v2.")
+        st.stop()
+
+    df_scan = pd.DataFrame(scan_results)
+    df_scan = df_scan.sort_values("MQS", ascending=False)
+
+    # --- Top Picks Table ---
+    st.markdown("### 🔝 Top Momentum Engine v2 Picks Today")
+    st.dataframe(
+        df_scan[["Ticker", "MQS", "Phase", "Entry", "Exit", "Long OK"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # --- Select a Ticker for Deep Dive ---
+    st.markdown("### 🔍 Deep Dive Analysis")
+    selected = st.selectbox("Select a ticker to analyze:", df_scan["Ticker"].tolist())
+
+    daily = load_daily_ohlcv(selected)
+    res = analyze_ticker(
+        daily=daily,
+        h4=None,
+        h1=None,
+        equity=100_000,
+        cfg=cfg,
+    )
+
+    mqs = res["mqs"].iloc[-1]
+    phase = res["phase"].iloc[-1]
+    entry = res["entry_signal"].iloc[-1]
+    exit_ = res["exit_signal"].iloc[-1]
+    long_ok = res["long_ok"].iloc[-1]
+    narrative = res["narrative"].iloc[-1]
+
+    # --- KPI Row ---
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("MQS", f"{mqs:.1f}")
+    col2.metric("Phase", phase)
+    col3.metric("Entry Signal", "Yes" if entry else "No")
+    col4.metric("Exit Signal", "Yes" if exit_ else "No")
+
+    st.markdown("### 🧠 Engine Narrative")
+    st.write(narrative)
+
+    # --- Mini Chart ---
+    st.markdown("### 📉 Price Chart")
+    df = daily.tail(120)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name=selected,
+        )
+    )
+    fig.update_layout(
+        height=320,
+        template="plotly_dark",
+        title=f"{selected} — Momentum Engine v2 Chart",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # --- Additional Metrics ---
+    st.markdown("### 📈 Additional Metrics")
+    st.write("Momentum Engine v2 integrates trend, volatility, risk, and structural signals to produce a unified MQS score.")
+                
 with tab_shorts:
     st.subheader("⚠️ Short Opportunities Today")
 
