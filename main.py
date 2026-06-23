@@ -1924,6 +1924,9 @@ fig_trend = go.Figure(
     )
 )
 
+fig_trend.update_layout(height=260, template="plotly_dark")
+st.plotly_chart(fig_trend, use_container_width=True)
+
 # =========================================================
 # ENGINE NARRATIVE
 # =========================================================
