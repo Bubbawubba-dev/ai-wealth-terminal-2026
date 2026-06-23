@@ -1679,21 +1679,22 @@ with tab_ai:
 
     if preset == "Balanced":
         cfg = EngineConfig()
+        
     elif preset == "Aggressive":
-        cfg = EngineConfig()
+        cfg = EngineConfig(
             momentum_weight=1.3,
             volatility_weight=0.7,
             trend_weight=1.2,
             risk_weight=0.8,
+        )
+        
     else:  # Conservative
-        cfg = EngineConfig()
+        cfg = EngineConfig(
             momentum_weight=0.8,
             volatility_weight=1.2,
             trend_weight=1.0,
             risk_weight=1.3,
         )
-
-    st.markdown("### 📊 Scanning Universe for High‑Quality Setups…")
 
     # --- Multi‑Ticker Scan ---
     scan_results = []
