@@ -1963,10 +1963,17 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 
-    # --- Additional Metrics ---
-    st.markdown("### 📈 Additional Metrics")
-    st.write("Momentum Engine v2 integrates trend, volatility, risk, and structural signals to produce a unified MQS score.")
-                
+# =========================================================
+# ADDITIONAL METRICS
+# =========================================================
+
+st.markdown("### 📈 Additional Metrics")
+st.write("Momentum Engine v2 integrates trend, volatility, risk, and structural signals to produce a unified MQS score.")
+
+# =========================================================
+# SHORT OPPORTUNITIES TAB
+# =========================================================
+
 with tab_shorts:
     st.subheader("⚠️ Short Opportunities Today")
 
