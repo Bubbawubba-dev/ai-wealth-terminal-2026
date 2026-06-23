@@ -1601,7 +1601,7 @@ with tab_sentiment:
                     st.metric("Volatility Score", score_components["vol_score"])
                 with col_sq5:
                     st.metric("Structure Score", score_components["structure_score"])
-
+                    
                 # TRS Gauge
                 fig_trs = go.Figure(
                     go.Indicator(
@@ -1685,7 +1685,6 @@ with tab_ai:
             volatility_weight=0.7,
             trend_weight=1.2,
             risk_weight=0.8,
-        )
     else:  # Conservative
         cfg = EngineConfig(
             momentum_weight=0.8,
