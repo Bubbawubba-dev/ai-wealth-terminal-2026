@@ -1759,12 +1759,166 @@ with tab_ai:
     long_ok = res["long_ok"].iloc[-1]
     narrative = res["narrative"].iloc[-1]
 
+
+    # =========================================================
+# MULTI‑TIMEFRAME TREND ALIGNMENT (D1 / H4 / H1)
+# =========================================================
+
+st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
+
+def compute_trend(df):
+    close = df["Close"].iloc[-1]
+    sma20 = df["Close"].rolling(20).mean().iloc[-1]
+    sma50 = df["Close"].rolling(50).mean().iloc[-1]
+    sma200 = df["Close"].rolling(200).mean().iloc[-1] if len(df) >= 200 else sma50
+
+    score = 0
+    if close > sma20: score += 1
+    if close > sma50: score += 1
+    if close > sma200: score += 1
+
+    if score == 3:
+        return "Strong Uptrend", "🟢"
+    elif score == 2:
+        return "Uptrend", "🟡"
+    elif score == 1:
+        return "Weak / Mixed", "🟠"
+    else:
+        return "Downtrend", "🔴"
+
+# Load multi‑timeframe data
+d1 = daily
+h4 = yf.download(selected, period="60d", interval="4h").dropna()
+h1 = yf.download(selected, period="30d", interval="1h").dropna()
+
+trend_d1, icon_d1 = compute_trend(d1)
+trend_h4, icon_h4 = compute_trend(h4)
+trend_h1, icon_h1 = compute_trend(h1)
+
+colA, colB, colC = st.columns(3)
+colA.metric("Daily Trend", f"{icon_d1} {trend_d1}")
+colB.metric("4H Trend", f"{icon_h4} {trend_h4}")
+colC.metric("1H Trend", f"{icon_h1} {trend_h1}")
+
     # --- KPI Row ---
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("MQS", f"{mqs:.1f}")
     col2.metric("Phase", phase)
     col3.metric("Entry Signal", "Yes" if entry else "No")
     col4.metric("Exit Signal", "Yes" if exit_ else "No")
+
+# =========================================================
+# TRADE BIAS + CONFIDENCE METER
+# =========================================================
+
+st.markdown("### 🎯 Trade Bias & Confidence")
+
+# Bias logic
+if entry and long_ok and mqs > 60:
+    bias = "Bullish"
+    bias_color = "🟢"
+elif exit_ or mqs < 40:
+    bias = "Bearish"
+    bias_color = "🔴"
+else:
+    bias = "Neutral"
+    bias_color = "🟡"
+
+# Confidence score
+confidence = 0
+
+# MQS weight
+confidence += np.interp(mqs, [0, 100], [10, 40])
+
+# Trend alignment weight
+alignment_score = 0
+alignment_score += 1 if "Uptrend" in trend_d1 else 0
+alignment_score += 1 if "Uptrend" in trend_h4 else 0
+alignment_score += 1 if "Uptrend" in trend_h1 else 0
+confidence += alignment_score * 15
+
+# Phase weight
+if "Breakout" in phase or "Uptrend" in phase:
+    confidence += 20
+elif "Weak" in phase:
+    confidence += 5
+
+# Entry/Exit weight
+if entry: confidence += 15
+if exit_: confidence -= 20
+
+confidence = float(np.clip(confidence, 0, 100))
+
+# Gauge
+fig_conf = go.Figure(
+    go.Indicator(
+        mode="gauge+number",
+        value=confidence,
+        title={"text": f"Trade Bias: {bias_color} {bias}"},
+        gauge={
+            "axis": {"range": [0, 100]},
+            "bar": {"color": "#38bdf8"},
+            "steps": [
+                {"range": [0, 30], "color": "#7f1d1d"},
+                {"range": [30, 60], "color": "#92400e"},
+                {"range": [60, 80], "color": "#166534"},
+                {"range": [80, 100], "color": "#22c55e"},
+            ],
+        },
+    )
+)
+
+fig_conf.update_layout(height=260, template="plotly_dark")
+st.plotly_chart(fig_conf, use_container_width=True)
+
+
+# =========================================================
+# TREND STRENGTH GAUGE
+# =========================================================
+
+st.markdown("### 📈 Trend Strength Gauge")
+
+# Compute trend strength using price vs SMA levels
+close_price = daily["Close"].iloc[-1]
+sma20 = daily["Close"].rolling(20).mean().iloc[-1]
+sma50 = daily["Close"].rolling(50).mean().iloc[-1]
+sma200 = daily["Close"].rolling(200).mean().iloc[-1] if len(daily) >= 200 else sma50
+
+dist20 = (close_price - sma20) / sma20 * 100
+dist50 = (close_price - sma50) / sma50 * 100
+dist200 = (close_price - sma200) / sma200 * 100
+
+# Weighted trend score
+trend_strength = (
+    np.interp(dist20, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.4 +
+    np.interp(dist50, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
+    np.interp(dist200, [-10, 0, 10, 20], [5, 30, 60, 90]) * 0.3
+)
+
+trend_strength = float(np.clip(trend_strength, 0, 100))
+
+# Gauge visualization
+fig_trend = go.Figure(
+    go.Indicator(
+        mode="gauge+number",
+        value=trend_strength,
+        title={"text": "Trend Strength"},
+        gauge={
+            "axis": {"range": [0, 100]},
+            "bar": {"color": "#38bdf8"},
+            "steps": [
+                {"range": [0, 30], "color": "#7f1d1d"},
+                {"range": [30, 60], "color": "#92400e"},
+                {"range": [60, 80], "color": "#166534"},
+                {"range": [80, 100], "color": "#22c55e"},
+            ],
+        },
+    )
+)
+
+fig_trend.update_layout(height=260, template="plotly_dark")
+st.plotly_chart(fig_trend, use_container_width=True)
+
 
     st.markdown("### 🧠 Engine Narrative")
     st.write(narrative)
