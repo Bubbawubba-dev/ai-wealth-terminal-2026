@@ -1691,9 +1691,68 @@ with tab_ai:
 with tab_shorts:
     st.subheader("⚠️ Short Opportunities Today")
 
-    short_df = short_ideas_scanner(df_history, universe)
+    # --- Crash Mode Toggle ---
+    crash_mode = st.toggle(
+        "🔥 Market Crash Mode (More Aggressive Short Scanning)",
+        value=False
+    )
 
+    # --- Safety: Ensure df_history exists ---
+    if "df_history" not in locals() and "df_history" not in globals():
+        st.error("Historical data not loaded. Please run the app again.")
+        st.stop()
+
+    # --- Safety: Ensure universe exists ---
+    if "universe" not in locals() and "universe" not in globals():
+        st.error("Universe not loaded.")
+        st.stop()
+
+    # --- Run Scanner ---
+    try:
+        short_df = short_ideas_scanner(df_history, universe, crash_mode)
+    except Exception as e:
+        st.error(f"Short scanner error: {e}")
+        st.stop()
+
+    # --- Display Table ---
     if short_df.empty:
         st.info("No short setups detected today.")
+        st.stop()
     else:
         st.dataframe(short_df, use_container_width=True)
+
+    # --- Mini Charts ---
+    st.markdown("### 📉 Mini Charts for Short Candidates")
+
+    for _, row in short_df.iterrows():
+        ticker = row["Ticker"]
+
+        try:
+            df = df_history[ticker].dropna().tail(60)
+        except Exception:
+            continue
+
+        if df.empty:
+            continue
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df["Open"],
+                high=df["High"],
+                low=df["Low"],
+                close=df["Close"],
+                name=ticker,
+            )
+        )
+
+        fig.update_layout(
+            height=250,
+            margin=dict(l=10, r=10, t=25, b=10),
+            template="plotly_dark",
+            showlegend=False,
+            title=f"{ticker} — Mini Chart",
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
