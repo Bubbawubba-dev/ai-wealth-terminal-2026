@@ -60,9 +60,9 @@ if not check_password():
 def get_base_universe():
     return [
         "ASTS", "ANET", "MRVL", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", "ARMG", "UMAC",
-        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "QUBT", "QBTS", "NOW", "HIVE", "ONDS", "F", "WYFI", "GOOGL",
+        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "QUBT", "YANG", "NOW", "HIVE", "ONDS", "F", "WYFI", "GOOGL",
         "AVGO", "MU", "STX", "QCOM", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "ONDS", "IREN", "NBIS",
-        "ENPH", "QCOM", "SMCI", "RGTI", "ASTC", "SHOP", "FJET", "NVDA", "SHAZ", "WOLF", "AVAV", "RCAT", "KTOS", "BA",
+        "ENPH", "QCOM", "SMCI", "RGTI", "ASTC", "SHOP", "QID", "NVDA", "SHAZ", "SDS", "SQQQ", "SPXU", "KTOS", "TWM",
     ]
 
 
