@@ -1791,6 +1791,10 @@ d1 = daily
 h4 = yf.download(selected, period="60d", interval="4h").dropna()
 h1 = yf.download(selected, period="30d", interval="1h").dropna()
 
+# =========================================================
+# MULTI‑TIMEFRAME TREND ALIGNMENT
+# =========================================================
+
 trend_d1, icon_d1 = compute_trend(d1)
 trend_h4, icon_h4 = compute_trend(h4)
 trend_h1, icon_h1 = compute_trend(h1)
@@ -1800,12 +1804,15 @@ colA.metric("Daily Trend", f"{icon_d1} {trend_d1}")
 colB.metric("4H Trend", f"{icon_h4} {trend_h4}")
 colC.metric("1H Trend", f"{icon_h1} {trend_h1}")
 
-    # --- KPI Row ---
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MQS", f"{mqs:.1f}")
-    col2.metric("Phase", phase)
-    col3.metric("Entry Signal", "Yes" if entry else "No")
-    col4.metric("Exit Signal", "Yes" if exit_ else "No")
+# =========================================================
+# KPI ROW
+# =========================================================
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("MQS", f"{mqs:.1f}")
+col2.metric("Phase", phase)
+col3.metric("Entry Signal", "Yes" if entry else "No")
+col4.metric("Exit Signal", "Yes" if exit_ else "No")
 
 # =========================================================
 # TRADE BIAS + CONFIDENCE METER
@@ -1844,8 +1851,10 @@ elif "Weak" in phase:
     confidence += 5
 
 # Entry/Exit weight
-if entry: confidence += 15
-if exit_: confidence -= 20
+if entry:
+    confidence += 15
+if exit_:
+    confidence -= 20
 
 confidence = float(np.clip(confidence, 0, 100))
 
@@ -1870,7 +1879,6 @@ fig_conf = go.Figure(
 
 fig_conf.update_layout(height=260, template="plotly_dark")
 st.plotly_chart(fig_conf, use_container_width=True)
-
 
 # =========================================================
 # TREND STRENGTH GAUGE
