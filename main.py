@@ -1924,33 +1924,41 @@ fig_trend = go.Figure(
     )
 )
 
-fig_trend.update_layout(height=260, template="plotly_dark")
-st.plotly_chart(fig_trend, use_container_width=True)
+# =========================================================
+# ENGINE NARRATIVE
+# =========================================================
 
+st.markdown("### 🧠 Engine Narrative")
+st.write(narrative)
 
-    st.markdown("### 🧠 Engine Narrative")
-    st.write(narrative)
+# =========================================================
+# MINI PRICE CHART
+# =========================================================
 
-    # --- Mini Chart ---
-    st.markdown("### 📉 Price Chart")
-    df = daily.tail(120)
-    fig = go.Figure()
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index,
-            open=df["Open"],
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
-            name=selected,
-        )
+st.markdown("### 📉 Price Chart")
+
+df = daily.tail(120)
+
+fig = go.Figure()
+fig.add_trace(
+    go.Candlestick(
+        x=df.index,
+        open=df["Open"],
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"],
+        name=selected,
     )
-    fig.update_layout(
-        height=320,
-        template="plotly_dark",
-        title=f"{selected} — Momentum Engine v2 Chart",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+)
+
+fig.update_layout(
+    height=320,
+    template="plotly_dark",
+    title=f"{selected} — Momentum Engine v2 Chart",
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
 
     # --- Additional Metrics ---
     st.markdown("### 📈 Additional Metrics")
