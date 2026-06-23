@@ -643,6 +643,75 @@ def compute_factor_scores(df_history, ticker, fundamentals):
         return None
 
 # =========================================================
+# SHORT SELLING SIGNALS (Simple & Lightweight)
+# =========================================================
+
+def compute_short_signal(df):
+    """
+    Simple short-selling signal:
+    - RSI > 70 (overbought)
+    - 1-day drop > 2%
+    - Volume spike > 1.5x average
+    """
+    try:
+        close = df["Close"]
+        volume = df["Volume"]
+
+        rsi = unified_signal(df)["rsi"]
+
+        ret_1d = (close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100
+        vol_now = volume.iloc[-1]
+        vol_avg = volume.tail(20).mean()
+
+        score = 0
+        if rsi > 70:
+            score += 1
+        if ret_1d < -2:
+            score += 1
+        if vol_now > vol_avg * 1.5:
+            score += 1
+
+        return {
+            "RSI": round(rsi, 2),
+            "1D Return (%)": round(ret_1d, 2),
+            "Volume Spike (x)": round(vol_now / vol_avg, 2) if vol_avg > 0 else 1,
+            "ShortScore": score,
+        }
+    except Exception:
+        return {"RSI": 50, "1D Return (%)": 0, "Volume Spike (x)": 1, "ShortScore": 0}
+
+
+def short_ideas_scanner(df_history, universe):
+    rows = []
+    for ticker in universe:
+        try:
+            df = df_history[ticker].dropna()
+            if len(df) < 20:
+                continue
+
+            sig = compute_short_signal(df)
+
+            if sig["ShortScore"] >= 2:  # threshold
+                rows.append(
+                    {
+                        "Ticker": ticker,
+                        "RSI": sig["RSI"],
+                        "1D Return (%)": sig["1D Return (%)"],
+                        "Volume Spike (x)": sig["Volume Spike (x)"],
+                        "Short Score": sig["ShortScore"],
+                        "Price": round(df["Close"].iloc[-1], 2),
+                        "Stop (Prev High)": round(df["High"].iloc[-2], 2),
+                        "Target (3% Drop)": round(df["Close"].iloc[-1] * 0.97, 2),
+                    }
+                )
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows).sort_values(by="Short Score", ascending=False)
+# =========================================================
 # 5. SHORT-TERM ENGINES (BREAKOUT / PULLBACK / MOMENTUM)
 # =========================================================
 
@@ -1189,6 +1258,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
     tab_sentiment,
     tab_macro,
     tab_ai,
+    tab_shorts,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -1197,6 +1267,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
+        "⚠️ Short Ideas",
     ]
 )
 
@@ -1616,3 +1687,13 @@ with tab_ai:
                 st.dataframe(top_picks, use_container_width=True, hide_index=True)
             else:
                 st.info("No composite top picks available today.")
+
+with tab_shorts:
+    st.subheader("⚠️ Short Opportunities Today")
+
+    short_df = short_ideas_scanner(df_history, universe)
+
+    if short_df.empty:
+        st.info("No short setups detected today.")
+    else:
+        st.dataframe(short_df, use_container_width=True)
