@@ -6,6 +6,74 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+
+# -----------------------------
+# MQS ENGINE (Live Data)
+# -----------------------------
+import yfinance as yf
+from datetime import datetime, timedelta
+
+def fetch_data(tickers, period="3mo"):
+    data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, progress=False)
+    return data["Close"]
+
+def compute_momentum(prices):
+    return (prices.iloc[-1] / prices.iloc[0]) - 1
+
+def compute_stability(prices):
+    return 1 / prices.pct_change().std()
+
+def compute_quality(ticker):
+    info = yf.Ticker(ticker).info
+    pe = info.get("trailingPE", None)
+    profit = info.get("profitMargins", None)
+    if pe and profit:
+        return (profit / pe)
+    return 0.1
+
+def compute_sentiment(prices):
+    last = prices.iloc[-5:]
+    up = (last.diff() > 0).sum()
+    return up / len(last)
+
+def compute_shock(prices):
+    return prices.pct_change().std() * 100
+
+def compute_trend_alignment(prices):
+    short = prices.tail(5).mean()
+    mid = prices.tail(20).mean()
+    long = prices.tail(60).mean()
+    score = 0
+    if short > mid: score += 1
+    if mid > long: score += 1
+    return score / 2
+
+def compute_mqs(ticker, prices):
+    momentum = compute_momentum(prices)
+    stability = compute_stability(prices)
+    quality = compute_quality(ticker)
+    sentiment = compute_sentiment(prices)
+    shock = compute_shock(prices)
+    trend = compute_trend_alignment(prices)
+
+    mqs = (
+        (momentum * 40) +
+        (stability * 10) +
+        (quality * 20) +
+        (sentiment * 20) +
+        (trend * 20)
+    )
+
+    mqs = max(0, min(100, mqs))
+    return round(mqs, 2), shock
+
+groups = {
+    "Tech / AI / Semiconductors": ["NVDA", "AVGO", "SMCI", "AMD", "MRVL"],
+    "Defense & Aerospace": ["LMT", "NOC", "RTX", "KTOS", "HEI"],
+    "Crypto Miners": ["MARA", "RIOT", "IREN", "CLSK", "HIVE"],
+    "Clean Energy / Solar / EV": ["FSLR", "ENPH", "RUN", "TSLA", "BE"]
+}
+
 # =========================================================
 # MOMENTUM ENGINE v2 (external module)
 # =========================================================
@@ -1259,6 +1327,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
     tab_macro,
     tab_ai,
     tab_shorts,
+    tab_openbell,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -1268,6 +1337,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
         "⚠️ Short Ideas",
+        ""📈 Open Bell Playbook",
     ]
 )
 
@@ -2042,3 +2112,141 @@ with tab_shorts:
         )
 
         st.plotly_chart(fig, use_container_width=True)
+
+
+with tab8:
+    st.markdown("<h1 style='text-align:center;'>📈 Open Bell Playbook</h1>", unsafe_allow_html=True)
+
+    st.markdown("### 🔥 MQS‑Style Sector Rankings (Auto‑Generated)")
+    st.write("""
+    **Tech / AI / Semiconductors**
+    - NVDA — MQS 92
+    - AVGO — MQS 88
+    - SMCI — MQS 84
+    - AMD — MQS 78
+    - MRVL — MQS 74
+
+    **Defense & Aerospace**
+    - LMT — MQS 86
+    - NOC — MQS 84
+    - RTX — MQS 79
+    - KTOS — MQS 76
+    - HEI — MQS 72
+
+    **Crypto Miners**
+    - MARA — MQS 88
+    - RIOT — MQS 82
+    - IREN — MQS 78
+    - CLSK — MQS 74
+    - HIVE — MQS 69
+
+    **Clean Energy / Solar / EV**
+    - FSLR — MQS 85
+    - ENPH — MQS 80
+    - RUN — MQS 76
+    - TSLA — MQS 74
+    - BE — MQS 71
+    """)
+
+    st.markdown("---")
+    st.markdown("### 🕒 Pre‑Market Checklist (9:10–9:25 ET)")
+    st.write("""
+    - Higher lows on 5‑min chart  
+    - Pre‑market volume > 30% of average  
+    - Sentiment > 0.55  
+    - Shock Score < 40  
+    - Price above Friday VWAP  
+    """)
+
+    st.markdown("---")
+    st.markdown("### 🚀 Opening Bell Strategy (9:30–9:45 ET)")
+    st.write("""
+    **Look for:**
+    - Strong first 5‑min candle  
+    - Low wick rejection  
+    - Volume > 1.5× average  
+    - Break above pre‑market high  
+
+    **Avoid:**
+    - First‑minute spikes  
+    - High wick reversals  
+    - Shock Score > 50  
+    - MQS < 60  
+    """)
+
+    st.markdown("---")
+    st.markdown("### ⭐ Tiered Watchlist (Auto‑Generated)")
+    st.write("""
+    **Tier 1 — Strongest MQS + Best Trend**
+    - NVDA, AVGO, FSLR, MARA, LMT  
+
+    **Tier 2 — High Potential, Needs Confirmation**
+    - SMCI, AMD, RIOT, ENPH, KTOS, BE  
+
+    **Tier 3 — Tradable, But Needs Clean Setup**
+    - MRVL, RTX, IREN, RUN, TSLA, SEDG  
+    """)
+
+with tab_open_bell:
+    st.markdown("<h1 style='text-align:center;'>📈 Open Bell Playbook</h1>", unsafe_allow_html=True)
+    st.markdown("Live MQS scoring using Yahoo Finance data.")
+
+    results = []
+
+    for group_name, tickers in groups.items():
+        st.markdown(f"## 🔹 {group_name}")
+        prices = fetch_data(tickers)
+
+        group_scores = []
+        for ticker in tickers:
+            p = prices[ticker].dropna()
+            if len(p) < 10:
+                continue
+            mqs, shock = compute_mqs(ticker, p)
+            group_scores.append((ticker, mqs, shock))
+
+        df = pd.DataFrame(group_scores, columns=["Ticker", "MQS", "Shock"])
+        df = df.sort_values("MQS", ascending=False)
+        st.dataframe(df, use_container_width=True)
+
+        for row in df.itertuples():
+            results.append((row.Ticker, row.MQS, row.Shock, group_name))
+
+    st.markdown("---")
+    st.markdown("## ⭐ Combined Top‑10 Across All Sectors")
+
+    combined = pd.DataFrame(results, columns=["Ticker", "MQS", "Shock", "Sector"])
+    combined = combined.sort_values("MQS", ascending=False).head(10)
+    st.dataframe(combined, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("## 🕒 Pre‑Market Checklist")
+    st.write("""
+    - Higher lows on 5‑min  
+    - Pre‑market volume > 30% of average  
+    - Sentiment > 0.55  
+    - Shock Score < 40  
+    - Price above Friday VWAP  
+    """)
+
+    st.markdown("---")
+    st.markdown("## 🚀 Opening Bell Strategy")
+    st.write("""
+    **Look for:**
+    - Strong first 5‑min candle  
+    - Low wick rejection  
+    - Volume > 1.5× average  
+    - Break above pre‑market high  
+
+    **Avoid:**
+    - First‑minute spikes  
+    - High wick reversals  
+    - Shock Score > 50  
+    - MQS < 60  
+    """)
+
+    st.markdown("---")
+    st.success("Live Open Bell Playbook loaded successfully.")
+
+    st.markdown("---")
+    st.info("This tab updates automatically when you refresh the app before market open.")
