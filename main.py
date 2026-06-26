@@ -1337,7 +1337,7 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
         "⚠️ Short Ideas",
-        ""📈 Open Bell Playbook",
+        "📈 Open Bell Playbook",
     ]
 )
 
