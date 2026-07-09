@@ -1749,7 +1749,6 @@ with tab_ai:
 
     if preset == "Balanced":
         cfg = EngineConfig()
-        
     elif preset == "Aggressive":
         cfg = EngineConfig(
             momentum_weight=1.3,
@@ -1757,7 +1756,6 @@ with tab_ai:
             trend_weight=1.2,
             risk_weight=0.8,
         )
-        
     else:  # Conservative
         cfg = EngineConfig(
             momentum_weight=0.8,
@@ -1798,8 +1796,7 @@ with tab_ai:
         st.warning("No valid tickers found for Momentum Engine v2.")
         st.stop()
 
-    df_scan = pd.DataFrame(scan_results)
-    df_scan = df_scan.sort_values("MQS", ascending=False)
+    df_scan = pd.DataFrame(scan_results).sort_values("MQS", ascending=False)
 
     # --- Top Picks Table ---
     st.markdown("### 🔝 Top Momentum Engine v2 Picks Today")
@@ -1829,262 +1826,224 @@ with tab_ai:
     long_ok = res["long_ok"].iloc[-1]
     narrative = res["narrative"].iloc[-1]
 
+    # =========================================================
+    # MULTI‑TIMEFRAME TREND ALIGNMENT (D1 / H4 / H1)
+    # =========================================================
+    st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
+
+    def compute_trend(df):
+        close = df["Close"].iloc[-1]
+        sma20 = df["Close"].rolling(20).mean().iloc[-1]
+        sma50 = df["Close"].rolling(50).mean().iloc[-1]
+        sma200 = df["Close"].rolling(200).mean().iloc[-1] if len(df) >= 200 else sma50
+
+        score = 0
+        if close > sma20:
+            score += 1
+        if close > sma50:
+            score += 1
+        if close > sma200:
+            score += 1
+
+        if score == 3:
+            return "Strong Uptrend", "🟢"
+        elif score == 2:
+            return "Uptrend", "🟡"
+        elif score == 1:
+            return "Weak / Mixed", "🟠"
+        else:
+            return "Downtrend", "🔴"
+
+    d1 = daily
+    h4 = yf.download(selected, period="60d", interval="4h", progress=False).dropna()
+    h1 = yf.download(selected, period="30d", interval="1h", progress=False).dropna()
+
+    trend_d1, icon_d1 = compute_trend(d1) if not d1.empty else ("N/A", "⚪")
+    trend_h4, icon_h4 = compute_trend(h4) if not h4.empty else ("N/A", "⚪")
+    trend_h1, icon_h1 = compute_trend(h1) if not h1.empty else ("N/A", "⚪")
+
+    colA, colB, colC = st.columns(3)
+    colA.metric("Daily Trend", f"{icon_d1} {trend_d1}")
+    colB.metric("4H Trend", f"{icon_h4} {trend_h4}")
+    colC.metric("1H Trend", f"{icon_h1} {trend_h1}")
 
     # =========================================================
-# MULTI‑TIMEFRAME TREND ALIGNMENT (D1 / H4 / H1)
-# =========================================================
+    # KPI ROW
+    # =========================================================
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("MQS", f"{mqs:.1f}")
+    col2.metric("Phase", phase)
+    col3.metric("Entry Signal", "Yes" if entry else "No")
+    col4.metric("Exit Signal", "Yes" if exit_ else "No")
 
-st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
+    # =========================================================
+    # TRADE BIAS + CONFIDENCE METER
+    # =========================================================
+    st.markdown("### 🎯 Trade Bias & Confidence")
 
-def compute_trend(df):
-    close = df["Close"].iloc[-1]
-    sma20 = df["Close"].rolling(20).mean().iloc[-1]
-    sma50 = df["Close"].rolling(50).mean().iloc[-1]
-    sma200 = df["Close"].rolling(200).mean().iloc[-1] if len(df) >= 200 else sma50
-
-    score = 0
-    if close > sma20: score += 1
-    if close > sma50: score += 1
-    if close > sma200: score += 1
-
-    if score == 3:
-        return "Strong Uptrend", "🟢"
-    elif score == 2:
-        return "Uptrend", "🟡"
-    elif score == 1:
-        return "Weak / Mixed", "🟠"
+    if entry and long_ok and mqs > 60:
+        bias = "Bullish"
+        bias_color = "🟢"
+    elif exit_ or mqs < 40:
+        bias = "Bearish"
+        bias_color = "🔴"
     else:
-        return "Downtrend", "🔴"
+        bias = "Neutral"
+        bias_color = "🟡"
 
-# Load multi‑timeframe data
-d1 = daily
-h4 = yf.download(selected, period="60d", interval="4h").dropna()
-h1 = yf.download(selected, period="30d", interval="1h").dropna()
+    confidence = 0
+    confidence += np.interp(mqs, [0, 100], [10, 40])
 
-# =========================================================
-# MULTI‑TIMEFRAME TREND ALIGNMENT
-# =========================================================
+    alignment_score = 0
+    alignment_score += 1 if "Uptrend" in trend_d1 else 0
+    alignment_score += 1 if "Uptrend" in trend_h4 else 0
+    alignment_score += 1 if "Uptrend" in trend_h1 else 0
+    confidence += alignment_score * 15
 
-trend_d1, icon_d1 = compute_trend(d1)
-trend_h4, icon_h4 = compute_trend(h4)
-trend_h1, icon_h1 = compute_trend(h1)
+    if "Breakout" in phase or "Uptrend" in phase:
+        confidence += 20
+    elif "Weak" in phase:
+        confidence += 5
 
-colA, colB, colC = st.columns(3)
-colA.metric("Daily Trend", f"{icon_d1} {trend_d1}")
-colB.metric("4H Trend", f"{icon_h4} {trend_h4}")
-colC.metric("1H Trend", f"{icon_h1} {trend_h1}")
+    if entry:
+        confidence += 15
+    if exit_:
+        confidence -= 20
 
-# =========================================================
-# KPI ROW
-# =========================================================
+    confidence = float(np.clip(confidence, 0, 100))
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("MQS", f"{mqs:.1f}")
-col2.metric("Phase", phase)
-col3.metric("Entry Signal", "Yes" if entry else "No")
-col4.metric("Exit Signal", "Yes" if exit_ else "No")
-
-# =========================================================
-# TRADE BIAS + CONFIDENCE METER
-# =========================================================
-
-st.markdown("### 🎯 Trade Bias & Confidence")
-
-# Bias logic
-if entry and long_ok and mqs > 60:
-    bias = "Bullish"
-    bias_color = "🟢"
-elif exit_ or mqs < 40:
-    bias = "Bearish"
-    bias_color = "🔴"
-else:
-    bias = "Neutral"
-    bias_color = "🟡"
-
-# Confidence score
-confidence = 0
-
-# MQS weight
-confidence += np.interp(mqs, [0, 100], [10, 40])
-
-# Trend alignment weight
-alignment_score = 0
-alignment_score += 1 if "Uptrend" in trend_d1 else 0
-alignment_score += 1 if "Uptrend" in trend_h4 else 0
-alignment_score += 1 if "Uptrend" in trend_h1 else 0
-confidence += alignment_score * 15
-
-# Phase weight
-if "Breakout" in phase or "Uptrend" in phase:
-    confidence += 20
-elif "Weak" in phase:
-    confidence += 5
-
-# Entry/Exit weight
-if entry:
-    confidence += 15
-if exit_:
-    confidence -= 20
-
-confidence = float(np.clip(confidence, 0, 100))
-
-# Gauge
-fig_conf = go.Figure(
-    go.Indicator(
-        mode="gauge+number",
-        value=confidence,
-        title={"text": f"Trade Bias: {bias_color} {bias}"},
-        gauge={
-            "axis": {"range": [0, 100]},
-            "bar": {"color": "#38bdf8"},
-            "steps": [
-                {"range": [0, 30], "color": "#7f1d1d"},
-                {"range": [30, 60], "color": "#92400e"},
-                {"range": [60, 80], "color": "#166534"},
-                {"range": [80, 100], "color": "#22c55e"},
-            ],
-        },
+    fig_conf = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=confidence,
+            title={"text": f"Trade Bias: {bias_color} {bias}"},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": "#38bdf8"},
+                "steps": [
+                    {"range": [0, 30], "color": "#7f1d1d"},
+                    {"range": [30, 60], "color": "#92400e"},
+                    {"range": [60, 80], "color": "#166534"},
+                    {"range": [80, 100], "color": "#22c55e"},
+                ],
+            },
+        )
     )
-)
+    fig_conf.update_layout(height=260, template="plotly_dark")
+    st.plotly_chart(fig_conf, use_container_width=True)
 
-fig_conf.update_layout(height=260, template="plotly_dark")
-st.plotly_chart(fig_conf, use_container_width=True)
+    # =========================================================
+    # TREND STRENGTH GAUGE
+    # =========================================================
+    st.markdown("### 📈 Trend Strength Gauge")
 
-# =========================================================
-# TREND STRENGTH GAUGE
-# =========================================================
+    close_price = daily["Close"].iloc[-1]
+    sma20 = daily["Close"].rolling(20).mean().iloc[-1]
+    sma50 = daily["Close"].rolling(50).mean().iloc[-1]
+    sma200 = daily["Close"].rolling(200).mean().iloc[-1] if len(daily) >= 200 else sma50
 
-st.markdown("### 📈 Trend Strength Gauge")
+    dist20 = (close_price - sma20) / sma20 * 100 if sma20 else 0
+    dist50 = (close_price - sma50) / sma50 * 100 if sma50 else 0
+    dist200 = (close_price - sma200) / sma200 * 100 if sma200 else 0
 
-# Compute trend strength using price vs SMA levels
-close_price = daily["Close"].iloc[-1]
-sma20 = daily["Close"].rolling(20).mean().iloc[-1]
-sma50 = daily["Close"].rolling(50).mean().iloc[-1]
-sma200 = daily["Close"].rolling(200).mean().iloc[-1] if len(daily) >= 200 else sma50
-
-dist20 = (close_price - sma20) / sma20 * 100
-dist50 = (close_price - sma50) / sma50 * 100
-dist200 = (close_price - sma200) / sma200 * 100
-
-# Weighted trend score
-trend_strength = (
-    np.interp(dist20, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.4 +
-    np.interp(dist50, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
-    np.interp(dist200, [-10, 0, 10, 20], [5, 30, 60, 90]) * 0.3
-)
-
-trend_strength = float(np.clip(trend_strength, 0, 100))
-
-# Gauge visualization
-fig_trend = go.Figure(
-    go.Indicator(
-        mode="gauge+number",
-        value=trend_strength,
-        title={"text": "Trend Strength"},
-        gauge={
-            "axis": {"range": [0, 100]},
-            "bar": {"color": "#38bdf8"},
-            "steps": [
-                {"range": [0, 30], "color": "#7f1d1d"},
-                {"range": [30, 60], "color": "#92400e"},
-                {"range": [60, 80], "color": "#166534"},
-                {"range": [80, 100], "color": "#22c55e"},
-            ],
-        },
+    trend_strength = (
+        np.interp(dist20, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.4
+        + np.interp(dist50, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3
+        + np.interp(dist200, [-10, 0, 10, 20], [5, 30, 60, 90]) * 0.3
     )
-)
+    trend_strength = float(np.clip(trend_strength, 0, 100))
 
-fig_trend.update_layout(height=260, template="plotly_dark")
-st.plotly_chart(fig_trend, use_container_width=True)
-
-# =========================================================
-# ENGINE NARRATIVE
-# =========================================================
-
-st.markdown("### 🧠 Engine Narrative")
-st.write(narrative)
-
-# =========================================================
-# MINI PRICE CHART
-# =========================================================
-
-st.markdown("### 📉 Price Chart")
-
-df = daily.tail(120)
-
-fig = go.Figure()
-fig.add_trace(
-    go.Candlestick(
-        x=df.index,
-        open=df["Open"],
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        name=selected,
+    fig_trend = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=trend_strength,
+            title={"text": "Trend Strength"},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": "#38bdf8"},
+                "steps": [
+                    {"range": [0, 30], "color": "#7f1d1d"},
+                    {"range": [30, 60], "color": "#92400e"},
+                    {"range": [60, 80], "color": "#166534"},
+                    {"range": [80, 100], "color": "#22c55e"},
+                ],
+            },
+        )
     )
-)
+    fig_trend.update_layout(height=260, template="plotly_dark")
+    st.plotly_chart(fig_trend, use_container_width=True)
 
-fig.update_layout(
-    height=320,
-    template="plotly_dark",
-    title=f"{selected} — Momentum Engine v2 Chart",
-)
+    # =========================================================
+    # ENGINE NARRATIVE
+    # =========================================================
+    st.markdown("### 🧠 Engine Narrative")
+    st.write(narrative)
 
-st.plotly_chart(fig, use_container_width=True)
+    # =========================================================
+    # MINI PRICE CHART
+    # =========================================================
+    st.markdown("### 📉 Price Chart")
+
+    df = daily.tail(120)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name=selected,
+        )
+    )
+    fig.update_layout(
+        height=320,
+        template="plotly_dark",
+        title=f"{selected} — Momentum Engine v2 Chart",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # =========================================================
+    # ADDITIONAL METRICS
+    # =========================================================
+    st.markdown("### 📈 Additional Metrics")
+    st.write(
+        "Momentum Engine v2 integrates trend, volatility, risk, and structural signals "
+        "to produce a unified MQS score."
+    )
 
 
 # =========================================================
-# ADDITIONAL METRICS
-# =========================================================
-
-st.markdown("### 📈 Additional Metrics")
-st.write("Momentum Engine v2 integrates trend, volatility, risk, and structural signals to produce a unified MQS score.")
-
-# =========================================================
-# SHORT OPPORTUNITIES TAB
+# TAB 7: SHORT OPPORTUNITIES
 # =========================================================
 
 with tab_shorts:
     st.subheader("⚠️ Short Opportunities Today")
 
-    # --- Crash Mode Toggle ---
     crash_mode = st.toggle(
         "🔥 Market Crash Mode (More Aggressive Short Scanning)",
         value=False
     )
 
-    # --- Safety: Ensure df_history exists ---
-    if "df_history" not in locals() and "df_history" not in globals():
+    if historical_data.empty:
         st.error("Historical data not loaded. Please run the app again.")
         st.stop()
 
-    # --- Safety: Ensure universe exists ---
-    if "universe" not in locals() and "universe" not in globals():
-        st.error("Universe not loaded.")
-        st.stop()
+    # Scanner currently takes 2 args; crash_mode toggle kept for UI extension
+    short_df = short_ideas_scanner(historical_data, full_universe)
 
-    # --- Run Scanner ---
-    try:
-        short_df = short_ideas_scanner(df_history, universe, crash_mode)
-    except Exception as e:
-        st.error(f"Short scanner error: {e}")
-        st.stop()
-
-    # --- Display Table ---
     if short_df.empty:
         st.info("No short setups detected today.")
         st.stop()
-    else:
-        st.dataframe(short_df, use_container_width=True)
 
-    # --- Mini Charts ---
+    st.dataframe(short_df, use_container_width=True, hide_index=True)
+
     st.markdown("### 📉 Mini Charts for Short Candidates")
-
     for _, row in short_df.iterrows():
         ticker = row["Ticker"]
 
         try:
-            df = df_history[ticker].dropna().tail(60)
+            df = historical_data[ticker].dropna().tail(60)
         except Exception:
             continue
 
@@ -2102,7 +2061,6 @@ with tab_shorts:
                 name=ticker,
             )
         )
-
         fig.update_layout(
             height=250,
             margin=dict(l=10, r=10, t=25, b=10),
@@ -2110,84 +2068,14 @@ with tab_shorts:
             showlegend=False,
             title=f"{ticker} — Mini Chart",
         )
-
         st.plotly_chart(fig, use_container_width=True)
 
 
-with tab8:
-    st.markdown("<h1 style='text-align:center;'>📈 Open Bell Playbook</h1>", unsafe_allow_html=True)
+# =========================================================
+# TAB 8: OPEN BELL PLAYBOOK (single canonical block)
+# =========================================================
 
-    st.markdown("### 🔥 MQS‑Style Sector Rankings (Auto‑Generated)")
-    st.write("""
-    **Tech / AI / Semiconductors**
-    - NVDA — MQS 92
-    - AVGO — MQS 88
-    - SMCI — MQS 84
-    - AMD — MQS 78
-    - MRVL — MQS 74
-
-    **Defense & Aerospace**
-    - LMT — MQS 86
-    - NOC — MQS 84
-    - RTX — MQS 79
-    - KTOS — MQS 76
-    - HEI — MQS 72
-
-    **Crypto Miners**
-    - MARA — MQS 88
-    - RIOT — MQS 82
-    - IREN — MQS 78
-    - CLSK — MQS 74
-    - HIVE — MQS 69
-
-    **Clean Energy / Solar / EV**
-    - FSLR — MQS 85
-    - ENPH — MQS 80
-    - RUN — MQS 76
-    - TSLA — MQS 74
-    - BE — MQS 71
-    """)
-
-    st.markdown("---")
-    st.markdown("### 🕒 Pre‑Market Checklist (9:10–9:25 ET)")
-    st.write("""
-    - Higher lows on 5‑min chart  
-    - Pre‑market volume > 30% of average  
-    - Sentiment > 0.55  
-    - Shock Score < 40  
-    - Price above Friday VWAP  
-    """)
-
-    st.markdown("---")
-    st.markdown("### 🚀 Opening Bell Strategy (9:30–9:45 ET)")
-    st.write("""
-    **Look for:**
-    - Strong first 5‑min candle  
-    - Low wick rejection  
-    - Volume > 1.5× average  
-    - Break above pre‑market high  
-
-    **Avoid:**
-    - First‑minute spikes  
-    - High wick reversals  
-    - Shock Score > 50  
-    - MQS < 60  
-    """)
-
-    st.markdown("---")
-    st.markdown("### ⭐ Tiered Watchlist (Auto‑Generated)")
-    st.write("""
-    **Tier 1 — Strongest MQS + Best Trend**
-    - NVDA, AVGO, FSLR, MARA, LMT  
-
-    **Tier 2 — High Potential, Needs Confirmation**
-    - SMCI, AMD, RIOT, ENPH, KTOS, BE  
-
-    **Tier 3 — Tradable, But Needs Clean Setup**
-    - MRVL, RTX, IREN, RUN, TSLA, SEDG  
-    """)
-
-with tab_open_bell:
+with tab_openbell:
     st.markdown("<h1 style='text-align:center;'>📈 Open Bell Playbook</h1>", unsafe_allow_html=True)
     st.markdown("Live MQS scoring using Yahoo Finance data.")
 
@@ -2199,54 +2087,63 @@ with tab_open_bell:
 
         group_scores = []
         for ticker in tickers:
-            p = prices[ticker].dropna()
-            if len(p) < 10:
+            try:
+                p = prices[ticker].dropna()
+                if len(p) < 10:
+                    continue
+                mqs, shock = compute_mqs(ticker, p)
+                group_scores.append((ticker, mqs, shock))
+            except Exception:
                 continue
-            mqs, shock = compute_mqs(ticker, p)
-            group_scores.append((ticker, mqs, shock))
 
-        df = pd.DataFrame(group_scores, columns=["Ticker", "MQS", "Shock"])
-        df = df.sort_values("MQS", ascending=False)
-        st.dataframe(df, use_container_width=True)
+        df_group = pd.DataFrame(group_scores, columns=["Ticker", "MQS", "Shock"])
+        if df_group.empty:
+            st.info("No valid data for this sector group.")
+            continue
 
-        for row in df.itertuples():
+        df_group = df_group.sort_values("MQS", ascending=False)
+        st.dataframe(df_group, use_container_width=True, hide_index=True)
+
+        for row in df_group.itertuples():
             results.append((row.Ticker, row.MQS, row.Shock, group_name))
 
     st.markdown("---")
     st.markdown("## ⭐ Combined Top‑10 Across All Sectors")
 
-    combined = pd.DataFrame(results, columns=["Ticker", "MQS", "Shock", "Sector"])
-    combined = combined.sort_values("MQS", ascending=False).head(10)
-    st.dataframe(combined, use_container_width=True)
+    if results:
+        combined = pd.DataFrame(results, columns=["Ticker", "MQS", "Shock", "Sector"])
+        combined = combined.sort_values("MQS", ascending=False).head(10)
+        st.dataframe(combined, use_container_width=True, hide_index=True)
+    else:
+        st.info("No combined results available right now.")
 
     st.markdown("---")
     st.markdown("## 🕒 Pre‑Market Checklist")
     st.write("""
-    - Higher lows on 5‑min  
-    - Pre‑market volume > 30% of average  
-    - Sentiment > 0.55  
-    - Shock Score < 40  
-    - Price above Friday VWAP  
-    """)
+- Higher lows on 5‑min  
+- Pre‑market volume > 30% of average  
+- Sentiment > 0.55  
+- Shock Score < 40  
+- Price above Friday VWAP  
+""")
 
     st.markdown("---")
     st.markdown("## 🚀 Opening Bell Strategy")
     st.write("""
-    **Look for:**
-    - Strong first 5‑min candle  
-    - Low wick rejection  
-    - Volume > 1.5× average  
-    - Break above pre‑market high  
+**Look for:**
+- Strong first 5‑min candle  
+- Low wick rejection  
+- Volume > 1.5× average  
+- Break above pre‑market high  
 
-    **Avoid:**
-    - First‑minute spikes  
-    - High wick reversals  
-    - Shock Score > 50  
-    - MQS < 60  
-    """)
+**Avoid:**
+- First‑minute spikes  
+- High wick reversals  
+- Shock Score > 50  
+- MQS < 60  
+""")
 
     st.markdown("---")
     st.success("Live Open Bell Playbook loaded successfully.")
-
     st.markdown("---")
     st.info("This tab updates automatically when you refresh the app before market open.")
