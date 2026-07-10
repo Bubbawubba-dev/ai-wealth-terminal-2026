@@ -157,9 +157,6 @@ def _bool_from_comparison(a, b, op):
     raise ValueError(f"Unsupported op: {op}")
 
 def compute_trend(daily_df: pd.DataFrame):
-    """
-    Returns (label, icon), scalar-safe and NaN-safe.
-    """
     if not _safe_nonempty(daily_df):
         return "N/A", "⚪"
 
