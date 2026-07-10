@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -2187,7 +2187,7 @@ with tab_ai:
     close_price = daily_norm["close"].iloc[-1]
     sma20 = daily_norm["close"].rolling(20).mean().iloc[-1]
     sma50 = daily_norm["close"].rolling(50).mean().iloc[-1]
-**sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
+	sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
 
     dist20 = (close_price - sma20) / sma20 * 100 if sma20 else 0
     dist50 = (close_price - sma50) / sma50 * 100 if sma50 else 0
