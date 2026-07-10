@@ -108,7 +108,7 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     }
     for src, dst in aliases.items():
         if src in out.columns and dst not in out.columns:
-            out[dst] = out[src]lose_price
+            out[dst] = out[src]
 
     needed = ["open", "high", "low", "close"]
     for col in needed:
