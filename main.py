@@ -135,11 +135,27 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     return out[["open", "high", "low", "close", "volume"]]
 
 
-def _safe_nonempty(df: pd.DataFrame | pd.Series | None) -> bool:
-    return bool(df is not None and hasattr(df, "empty") and not df.empty)
+def _safe_nonempty(df):
+    return df is not None and isinstance(df, pd.DataFrame) and not df.empty
 
+def _as_series_1d(x, name="value"):
+    s = x if isinstance(x, pd.Series) else pd.Series(x)
+    return pd.to_numeric(s, errors="coerce").rename(name)
 
-# === PATCH 1: compute_trend (replace body with scalar-safe logic) ===
+def _last_scalar(s: pd.Series, name="value"):
+    if s is None or len(s) == 0:
+        return np.nan
+    return s.iloc[-1]
+
+def _bool_from_comparison(a, b, op):
+    if op == ">":
+        return bool(a > b)
+    if op == "<":
+        return bool(a < b)
+    if op == "==":
+        return bool(a == b)
+    raise ValueError(f"Unsupported op: {op}")
+
 def compute_trend(daily_df: pd.DataFrame):
     """
     Returns (label, icon), scalar-safe and NaN-safe.
@@ -164,10 +180,6 @@ def compute_trend(daily_df: pd.DataFrame):
     if _bool_from_comparison(close, sma20, "<"):
         return "Downtrend", "🔴"
     return "Sideways", "🟡"
-
-
-
-
 
 # === PATCH 4: chart section guardrails (use in each chart block) ===
 def _prep_for_chart(df: pd.DataFrame, lookback: int | None = None) -> pd.DataFrame:
