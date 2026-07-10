@@ -1658,8 +1658,8 @@ with tab_sentiment:
                     long_ok = False
                     narrative = "Legacy engine active — no narrative available."
 
-                # TICKER SHOCK SCORE
-				intraday_df_single = fetch_intraday_snapshot([selected_ticker]).get(selected_ticker, pd.DataFrame())
+              		# TICKER SHOCK SCORE
+					intraday_df_single = fetch_intraday_snapshot([selected_ticker]).get(selected_ticker, pd.DataFrame())
 					daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
 					ticker_shock_score = np.nan
 					try:
