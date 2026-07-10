@@ -1659,19 +1659,19 @@ with tab_sentiment:
                     narrative = "Legacy engine active — no narrative available."
 
                 # TICKER SHOCK SCORE
-		intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
-		intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
-		daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
+				intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
+				intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
+				daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
 
-		try:
-    			ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock) or {}
-		except Exception:
-    			ticker_shock_obj = {}
+				try:
+    				ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock) or {}
+				except Exception:
+    				ticker_shock_obj = {}
 
-		ticker_shock_score = (
-    			ticker_shock_obj.get("shock_score", np.nan)
-    		if isinstance(ticker_shock_obj, dict)
-    		else np.nan
+				ticker_shock_score = (
+    				ticker_shock_obj.get("shock_score", np.nan)
+    			if isinstance(ticker_shock_obj, dict)
+    			else np.nan
 		)
 
                 # TOP METRICS ROW
