@@ -1658,15 +1658,17 @@ with tab_sentiment:
                     long_ok = False
                     narrative = "Legacy engine active — no narrative available."
 
-              		# TICKER SHOCK SCORE
-					intraday_df_single = fetch_intraday_snapshot([selected_ticker]).get(selected_ticker, pd.DataFrame())
-					daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
-					ticker_shock_score = np.nan
-					try:
-    					shock = compute_ticker_shock(intraday_df_single, daily_tail_for_shock) or {}
+              	# TICKER SHOCK SCORE
+				intraday_df_single = fetch_intraday_snapshot([selected_ticker]).get(
+					selected_ticker, pd.DataFrame()
+				)
+				daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
+				ticker_shock_score = np.nan
+				try:
+    				shock = compute_ticker_shock(intraday_df_single, daily_tail_for_shock) or {}
 					if isinstance(shock, dict):
-        				ticker_shock_score = shock.get("shock_score", np.nan)
-					except Exception as e:
+        			ticker_shock_score = shock.get("shock_score", np.nan)
+				except Exception as e:
     				# replace with your logger
     				print(f"[ticker_shock] {selected_ticker}: {e}")
 
