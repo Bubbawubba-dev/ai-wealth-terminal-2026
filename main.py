@@ -1628,7 +1628,6 @@ with tab_pullback:
 # =========================================================
 
 with tab_sentiment:
-with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
 
     if historical_data.empty:
@@ -1679,8 +1678,8 @@ with tab_sentiment:
                 intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
                 intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
                 daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
-		ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock)
-                ticker_shock_score = ticker_shock_obj["shock_score"]
+			ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock)
+                	ticker_shock_score = ticker_shock_obj["shock_score"]
 
                 # TOP METRICS ROW
                 col1, col2, col3, col4 = st.columns(4)
@@ -2047,8 +2046,42 @@ with tab_ai:
     st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
 
     def compute_trend_label(df):
-    if df is None or df.empty or "Close" not in df.columns:
-        return "N/A", "⚪"
+        if df is None or df.empty or "Close" not in df.columns:
+            return "N/A", "⚪"
+
+        close_col = df["Close"]
+        if isinstance(close_col, pd.DataFrame):
+            if close_col.shape[1] == 0:
+                return "N/A", "⚪"
+            close_series = close_col.iloc[:, 0]
+        else:
+            close_series = close_col
+
+        close_series = pd.to_numeric(close_series, errors="coerce").dropna()
+        if close_series.empty:
+            return "N/A", "⚪"
+
+        close = float(close_series.iloc[-1])
+        sma20 = float(close_series.rolling(20).mean().iloc[-1]) if len(close_series) >= 20 else close
+        sma50 = float(close_series.rolling(50).mean().iloc[-1]) if len(close_series) >= 50 else sma20
+        sma200 = float(close_series.rolling(200).mean().iloc[-1]) if len(close_series) >= 200 else sma50
+
+        score = 0
+        if close > sma20:
+            score += 1
+        if close > sma50:
+            score += 1
+        if close > sma200:
+            score += 1
+
+        if score == 3:
+            return "Strong Uptrend", "🟢"
+        elif score == 2:
+            return "Uptrend", "🟡"
+        elif score == 1:
+            return "Weak / Mixed", "🟠"
+        else:
+            return "Downtrend", "🔴"
 
     close_col = df["Close"]
     if isinstance(close_col, pd.DataFrame):
@@ -2162,7 +2195,7 @@ with tab_ai:
     close_price = daily_norm["close"].iloc[-1]
     sma20 = daily_norm["close"].rolling(20).mean().iloc[-1]
     sma50 = daily_norm["close"].rolling(50).mean().iloc[-1]
-	sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
+	***sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
 
     dist20 = (close_price - sma20) / sma20 * 100 if sma20 else 0
     dist50 = (close_price - sma50) / sma50 * 100 if sma50 else 0
