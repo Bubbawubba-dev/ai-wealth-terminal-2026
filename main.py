@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 from __future__ import annotations
 import pandas as pd
 import numpy as np
-
 
 def _as_series_1d(x, name: str = "value") -> pd.Series:
     """
@@ -109,7 +108,7 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     }
     for src, dst in aliases.items():
         if src in out.columns and dst not in out.columns:
-            out[dst] = out[src]
+            out[dst] = out[src]lose_price
 
     needed = ["open", "high", "low", "close"]
     for col in needed:
@@ -167,28 +166,7 @@ def compute_trend(daily_df: pd.DataFrame):
     return "Sideways", "🟡"
 
 
-# === PATCH 2: load_daily_ohlcv wrapper hardening ===
-def load_daily_ohlcv(*args, **kwargs):
-    """
-    Keep your existing provider logic inside _load_daily_ohlcv_impl,
-    then normalize shape before returning.
-    """
-    df = _load_daily_ohlcv_impl(*args, **kwargs)  # <-- rename your current function body to this impl
-    df = _normalize_ohlcv(df)
-    return df
 
-
-# === PATCH 3: fetch_data hardening ===
-def fetch_data(*args, **kwargs):
-    """
-    Keep your existing fetch logic inside _fetch_data_impl,
-    then normalize and guarantee DataFrame return.
-    """
-    df = _fetch_data_impl(*args, **kwargs)  # <-- rename existing function body
-    if df is None:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-    df = _normalize_ohlcv(df)
-    return df
 
 
 # === PATCH 4: chart section guardrails (use in each chart block) ===
@@ -239,7 +217,7 @@ def _prep_for_chart(df: pd.DataFrame, lookback: int | None = None) -> pd.DataFra
 import yfinance as yf
 from datetime import datetime, timedelta
 
-def fetch_data(tickers, period="3mo"):
+def fetch_close_prices(tickers, period="3mo"):
     data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, progress=False)
     return data["Close"]
 
@@ -580,7 +558,7 @@ def fetch_fundamental_metrics(tickers):
     return fundamental_records
 
 
-def load_daily_ohlcv(ticker):
+def fetch_ohlcv_daily(ticker):
     df = yf.download(ticker, period="1y", interval="1d")
     df = df.dropna()
     df = df.rename(columns=str.title)
@@ -753,7 +731,7 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             label = "Extreme Fear"
 
         return {
-            "timestamp": datetime.now(ZoneInfo("Asia/Hong_Kong")),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "ticker": ticker,
             "score": composite_score,
             "label": label,
@@ -1656,14 +1634,14 @@ with tab_sentiment:
             sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
             if sentiment["status"] == "Active":
-                ticker_df = historical_data[selected_ticker].dropna()
-                close = ticker_df["Close"]
-                high = ticker_df["High"]
-                low = ticker_df["Low"]
+                _normalize_ohlcv(historical_data[selected_ticker]).dropna()
+		close = ticker_df["close"]
+		high = ticker_df["high"]
+		low = ticker_df["low"]
 
                 # MOMENTUM ENGINE (v2 or legacy)
                 if engine_choice:
-                    daily = load_daily_ohlcv(selected_ticker)
+                    daily = fetch_ohlcv_daily(selected_ticker)
                     results = analyze_ticker(
                         daily=daily,
                         h4=None,
@@ -1690,7 +1668,8 @@ with tab_sentiment:
                 # TICKER SHOCK SCORE
                 intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
                 intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
-                ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
+                daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
+		ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock)
                 ticker_shock_score = ticker_shock_obj["shock_score"]
 
                 # TOP METRICS ROW
@@ -1994,7 +1973,7 @@ with tab_ai:
     scan_results = []
     for ticker in full_universe:
         try:
-            daily = load_daily_ohlcv(ticker)
+            daily = fetch_ohlcv_daily(selected_ticker)
             if daily.empty or len(daily) < 50:
                 continue
 
@@ -2036,7 +2015,7 @@ with tab_ai:
     st.markdown("### 🔍 Deep Dive Analysis")
     selected = st.selectbox("Select a ticker to analyze:", df_scan["Ticker"].tolist())
 
-    daily = load_daily_ohlcv(selected)
+    daily = fetch_ohlcv_daily(selected_ticker)
     res = analyze_ticker(
         daily=daily,
         h4=None,
@@ -2057,9 +2036,43 @@ with tab_ai:
     # =========================================================
     st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
 
-    def compute_trend(df):
+    def compute_trend_label(df):
     if df is None or df.empty:
         return "N/A", "⚪"
+
+    close_col = df["Close"]
+    if isinstance(close_col, pd.DataFrame):
+        if close_col.shape[1] == 0:
+            return "N/A", "⚪"
+        close_series = close_col.iloc[:, 0]
+    else:
+        close_series = close_col
+
+    close_series = pd.to_numeric(close_series, errors="coerce").dropna()
+    if close_series.empty:
+        return "N/A", "⚪"
+
+    close = float(close_series.iloc[-1])
+    sma20 = float(close_series.rolling(20).mean().iloc[-1]) if len(close_series) >= 20 else close
+    sma50 = float(close_series.rolling(50).mean().iloc[-1]) if len(close_series) >= 50 else sma20
+    sma200 = float(close_series.rolling(200).mean().iloc[-1]) if len(close_series) >= 200 else sma50
+
+    score = 0
+    if close > sma20:
+        score += 1
+    if close > sma50:
+        score += 1
+    if close > sma200:
+        score += 1
+
+    if score == 3:
+        return "Strong Uptrend", "🟢"
+    elif score == 2:
+        return "Uptrend", "🟡"
+    elif score == 1:
+        return "Weak / Mixed", "🟠"
+    else:
+        return "Downtrend", "🔴"
 
     # Normalize close to a 1D Series
     close_col = df["Close"]
@@ -2123,6 +2136,10 @@ with tab_ai:
     confidence = 0
     confidence += np.interp(mqs, [0, 100], [10, 40])
 
+	trend_d1, icon_d1 = compute_trend_label(daily)
+	trend_h4, icon_h4 = ("N/A", "⚪")
+	trend_h1, icon_h1 = ("N/A", "⚪")
+
     alignment_score = 0
     alignment_score += 1 if "Uptrend" in trend_d1 else 0
     alignment_score += 1 if "Uptrend" in trend_h4 else 0
@@ -2166,10 +2183,11 @@ with tab_ai:
     # =========================================================
     st.markdown("### 📈 Trend Strength Gauge")
 
-    close_price = daily["Close"].iloc[-1]
-    sma20 = daily["Close"].rolling(20).mean().iloc[-1]
-    sma50 = daily["Close"].rolling(50).mean().iloc[-1]
-    sma200 = daily["Close"].rolling(200).mean().iloc[-1] if len(daily) >= 200 else sma50
+    daily_norm = _normalize_ohlcv(daily)
+    close_price = daily_norm["close"].iloc[-1]
+    sma20 = daily_norm["close"].rolling(20).mean().iloc[-1]
+    sma50 = daily_norm["close"].rolling(50).mean().iloc[-1]
+**sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
 
     dist20 = (close_price - sma20) / sma20 * 100 if sma20 else 0
     dist50 = (close_price - sma50) / sma50 * 100 if sma50 else 0
@@ -2213,15 +2231,15 @@ with tab_ai:
     # =========================================================
     st.markdown("### 📉 Price Chart")
 
-    df = daily.tail(120)
+    df = _normalize_ohlcv(daily).tail(120)
     fig = go.Figure()
     fig.add_trace(
         go.Candlestick(
             x=df.index,
-            open=df["Open"],
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
             name=selected,
         )
     )
@@ -2283,10 +2301,10 @@ with tab_shorts:
         fig.add_trace(
             go.Candlestick(
                 x=df.index,
-                open=df["Open"],
-                high=df["High"],
-                low=df["Low"],
-                close=df["Close"],
+                open=df["open"],
+                high=df["high"],
+                low=df["low"],
+                close=df["close"],
                 name=ticker,
             )
         )
@@ -2312,7 +2330,7 @@ with tab_openbell:
 
     for group_name, tickers in groups.items():
         st.markdown(f"## 🔹 {group_name}")
-        prices = fetch_data(tickers)
+        prices = fetch_close_prices(tickers)
 
         group_scores = []
         for ticker in tickers:
