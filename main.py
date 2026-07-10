@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-
 # -----------------------------
 # MQS ENGINE (Live Data)
 # -----------------------------
@@ -1832,41 +1831,44 @@ with tab_ai:
     st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
 
     def compute_trend(df):
-        close = df["Close"].iloc[-1]
-        sma20 = df["Close"].rolling(20).mean().iloc[-1]
-        sma50 = df["Close"].rolling(50).mean().iloc[-1]
-        sma200 = df["Close"].rolling(200).mean().iloc[-1] if len(df) >= 200 else sma50
+    if df is None or df.empty:
+        return "N/A", "⚪"
 
-        score = 0
-        if close > sma20:
-            score += 1
-        if close > sma50:
-            score += 1
-        if close > sma200:
-            score += 1
+    # Normalize close to a 1D Series
+    close_col = df["Close"]
+    if isinstance(close_col, pd.DataFrame):
+        if close_col.shape[1] == 0:
+            return "N/A", "⚪"
+        close_series = close_col.iloc[:, 0]
+    else:
+        close_series = close_col
 
-        if score == 3:
-            return "Strong Uptrend", "🟢"
-        elif score == 2:
-            return "Uptrend", "🟡"
-        elif score == 1:
-            return "Weak / Mixed", "🟠"
-        else:
-            return "Downtrend", "🔴"
+    close_series = pd.to_numeric(close_series, errors="coerce").dropna()
+    if close_series.empty:
+        return "N/A", "⚪"
 
-    d1 = daily
-    h4 = yf.download(selected, period="60d", interval="4h", progress=False).dropna()
-    h1 = yf.download(selected, period="30d", interval="1h", progress=False).dropna()
+    close = float(close_series.iloc[-1])
+    sma20 = float(close_series.rolling(20).mean().iloc[-1]) if len(close_series) >= 20 else close
+    sma50 = float(close_series.rolling(50).mean().iloc[-1]) if len(close_series) >= 50 else sma20
+    sma200 = float(close_series.rolling(200).mean().iloc[-1]) if len(close_series) >= 200 else sma50
 
-    trend_d1, icon_d1 = compute_trend(d1) if not d1.empty else ("N/A", "⚪")
-    trend_h4, icon_h4 = compute_trend(h4) if not h4.empty else ("N/A", "⚪")
-    trend_h1, icon_h1 = compute_trend(h1) if not h1.empty else ("N/A", "⚪")
+    score = 0
+    if close > sma20:
+        score += 1
+    if close > sma50:
+        score += 1
+    if close > sma200:
+        score += 1
 
-    colA, colB, colC = st.columns(3)
-    colA.metric("Daily Trend", f"{icon_d1} {trend_d1}")
-    colB.metric("4H Trend", f"{icon_h4} {trend_h4}")
-    colC.metric("1H Trend", f"{icon_h1} {trend_h1}")
-
+    if score == 3:
+        return "Strong Uptrend", "🟢"
+    elif score == 2:
+        return "Uptrend", "🟡"
+    elif score == 1:
+        return "Weak / Mixed", "🟠"
+    else:
+        return "Downtrend", "🔴"
+  
     # =========================================================
     # KPI ROW
     # =========================================================
