@@ -2046,44 +2046,9 @@ with tab_ai:
     st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
 
     def compute_trend_label(df):
-    if df is None or df.empty:
+    if df is None or df.empty or "Close" not in df.columns:
         return "N/A", "⚪"
 
-    close_col = df["Close"]
-    if isinstance(close_col, pd.DataFrame):
-        if close_col.shape[1] == 0:
-            return "N/A", "⚪"
-        close_series = close_col.iloc[:, 0]
-    else:
-        close_series = close_col
-
-    close_series = pd.to_numeric(close_series, errors="coerce").dropna()
-    if close_series.empty:
-        return "N/A", "⚪"
-
-    close = float(close_series.iloc[-1])
-    sma20 = float(close_series.rolling(20).mean().iloc[-1]) if len(close_series) >= 20 else close
-    sma50 = float(close_series.rolling(50).mean().iloc[-1]) if len(close_series) >= 50 else sma20
-    sma200 = float(close_series.rolling(200).mean().iloc[-1]) if len(close_series) >= 200 else sma50
-
-    score = 0
-    if close > sma20:
-        score += 1
-    if close > sma50:
-        score += 1
-    if close > sma200:
-        score += 1
-
-    if score == 3:
-        return "Strong Uptrend", "🟢"
-    elif score == 2:
-        return "Uptrend", "🟡"
-    elif score == 1:
-        return "Weak / Mixed", "🟠"
-    else:
-        return "Downtrend", "🔴"
-
-    # Normalize close to a 1D Series
     close_col = df["Close"]
     if isinstance(close_col, pd.DataFrame):
         if close_col.shape[1] == 0:
