@@ -1662,7 +1662,7 @@ with tab_sentiment:
                 intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
                 intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
                 daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
-			ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock)
+				ticker_shock_obj = compute_ticker_shock(intraday_df_single, daily_tail_for_shock)
                 	ticker_shock_score = ticker_shock_obj["shock_score"]
 
                 # TOP METRICS ROW
