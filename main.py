@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -137,24 +139,6 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
 def _safe_nonempty(df):
     return df is not None and isinstance(df, pd.DataFrame) and not df.empty
-
-def _as_series_1d(x, name="value"):
-    s = x if isinstance(x, pd.Series) else pd.Series(x)
-    return pd.to_numeric(s, errors="coerce").rename(name)
-
-def _last_scalar(s: pd.Series, name="value"):
-    if s is None or len(s) == 0:
-        return np.nan
-    return s.iloc[-1]
-
-def _bool_from_comparison(a, b, op):
-    if op == ">":
-        return bool(a > b)
-    if op == "<":
-        return bool(a < b)
-    if op == "==":
-        return bool(a == b)
-    raise ValueError(f"Unsupported op: {op}")
 
 def compute_trend(daily_df: pd.DataFrame):
     if not _safe_nonempty(daily_df):
@@ -2195,7 +2179,7 @@ with tab_ai:
     close_price = daily_norm["close"].iloc[-1]
     sma20 = daily_norm["close"].rolling(20).mean().iloc[-1]
     sma50 = daily_norm["close"].rolling(50).mean().iloc[-1]
-	sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
+	***sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
 
     dist20 = (close_price - sma20) / sma20 * 100 if sma20 else 0
     dist50 = (close_price - sma50) / sma50 * 100 if sma50 else 0
