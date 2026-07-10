@@ -6,6 +6,233 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+
+# === SHAPE-SAFETY MICROPATCH PACK (add near imports/top of file) ===
+from __future__ import annotations
+import pandas as pd
+import numpy as np
+
+
+def _as_series_1d(x, name: str = "value") -> pd.Series:
+    """
+    Coerce scalar/list/ndarray/Series/DataFrame(1-col) into a 1D Series.
+    Prevents accidental DataFrame-vs-Series shape bugs.
+    """
+    if isinstance(x, pd.DataFrame):
+        if x.shape[1] == 1:
+            return x.iloc[:, 0]
+        raise ValueError(f"{name} is DataFrame with {x.shape[1]} columns; expected 1D.")
+    if isinstance(x, pd.Series):
+        return x
+    if np.isscalar(x):
+        return pd.Series([x], name=name)
+    return pd.Series(x, name=name)
+
+
+def _last_scalar(x, name: str = "value", default=np.nan):
+    """
+    Return the last scalar from scalar/Series/DataFrame(1-col)/array-like.
+    Safe for empty containers.
+    """
+    if x is None:
+        return default
+    if isinstance(x, pd.DataFrame):
+        if x.empty:
+            return default
+        if x.shape[1] == 1:
+            return x.iloc[:, 0].iloc[-1]
+        # If multi-col DF sneaks in, pick first numeric col as fallback
+        num_cols = x.select_dtypes(include=[np.number]).columns
+        if len(num_cols):
+            return x[num_cols[0]].iloc[-1]
+        return default
+    if isinstance(x, pd.Series):
+        return default if x.empty else x.iloc[-1]
+    if np.isscalar(x):
+        return x
+    try:
+        arr = np.asarray(x)
+        return default if arr.size == 0 else arr.reshape(-1)[-1]
+    except Exception:
+        return default
+
+
+def _bool_from_comparison(a, b, op: str, default=False) -> bool:
+    """
+    Compare using last scalar values only, returning a real bool.
+    Avoids 'truth value of a Series is ambiguous'.
+    """
+    av = _last_scalar(a, "a", np.nan)
+    bv = _last_scalar(b, "b", np.nan)
+    if pd.isna(av) or pd.isna(bv):
+        return default
+    if op == ">":
+        return bool(av > bv)
+    if op == "<":
+        return bool(av < bv)
+    if op == ">=":
+        return bool(av >= bv)
+    if op == "<=":
+        return bool(av <= bv)
+    if op == "==":
+        return bool(av == bv)
+    if op == "!=":
+        return bool(av != bv)
+    raise ValueError(f"Unsupported op: {op}")
+
+
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enforce canonical OHLCV frame:
+      - DatetimeIndex sorted ascending
+      - columns: open/high/low/close/volume (float except volume)
+      - no duplicate index rows
+    """
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    out = df.copy()
+
+    # Flatten accidental MultiIndex columns from data providers
+    if isinstance(out.columns, pd.MultiIndex):
+        out.columns = [str(c[-1] if isinstance(c, tuple) else c) for c in out.columns]
+
+    # Standardize column names
+    rename_map = {c: str(c).strip().lower() for c in out.columns}
+    out = out.rename(columns=rename_map)
+
+    # Common aliases
+    aliases = {
+        "adj close": "close",
+        "adjclose": "close",
+        "closing price": "close",
+    }
+    for src, dst in aliases.items():
+        if src in out.columns and dst not in out.columns:
+            out[dst] = out[src]
+
+    needed = ["open", "high", "low", "close"]
+    for col in needed:
+        if col not in out.columns:
+            out[col] = np.nan
+    if "volume" not in out.columns:
+        out["volume"] = np.nan
+
+    # Ensure datetime index
+    if not isinstance(out.index, pd.DatetimeIndex):
+        if "date" in out.columns:
+            out["date"] = pd.to_datetime(out["date"], errors="coerce")
+            out = out.set_index("date")
+        else:
+            out.index = pd.to_datetime(out.index, errors="coerce")
+
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")]
+    out = out.sort_index()
+
+    for col in ["open", "high", "low", "close", "volume"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    return out[["open", "high", "low", "close", "volume"]]
+
+
+def _safe_nonempty(df: pd.DataFrame | pd.Series | None) -> bool:
+    return bool(df is not None and hasattr(df, "empty") and not df.empty)
+
+
+# === PATCH 1: compute_trend (replace body with scalar-safe logic) ===
+def compute_trend(daily_df: pd.DataFrame):
+    """
+    Returns (label, icon), scalar-safe and NaN-safe.
+    """
+    if not _safe_nonempty(daily_df):
+        return "N/A", "⚪"
+
+    d = _normalize_ohlcv(daily_df)
+    if d.empty:
+        return "N/A", "⚪"
+
+    close_s = _as_series_1d(d["close"], "close")
+    sma20_s = close_s.rolling(20, min_periods=20).mean()
+
+    close = _last_scalar(close_s, "close")
+    sma20 = _last_scalar(sma20_s, "sma20")
+
+    if pd.isna(close) or pd.isna(sma20):
+        return "N/A", "⚪"
+    if _bool_from_comparison(close, sma20, ">"):
+        return "Uptrend", "🟢"
+    if _bool_from_comparison(close, sma20, "<"):
+        return "Downtrend", "🔴"
+    return "Sideways", "🟡"
+
+
+# === PATCH 2: load_daily_ohlcv wrapper hardening ===
+def load_daily_ohlcv(*args, **kwargs):
+    """
+    Keep your existing provider logic inside _load_daily_ohlcv_impl,
+    then normalize shape before returning.
+    """
+    df = _load_daily_ohlcv_impl(*args, **kwargs)  # <-- rename your current function body to this impl
+    df = _normalize_ohlcv(df)
+    return df
+
+
+# === PATCH 3: fetch_data hardening ===
+def fetch_data(*args, **kwargs):
+    """
+    Keep your existing fetch logic inside _fetch_data_impl,
+    then normalize and guarantee DataFrame return.
+    """
+    df = _fetch_data_impl(*args, **kwargs)  # <-- rename existing function body
+    if df is None:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    df = _normalize_ohlcv(df)
+    return df
+
+
+# === PATCH 4: chart section guardrails (use in each chart block) ===
+def _prep_for_chart(df: pd.DataFrame, lookback: int | None = None) -> pd.DataFrame:
+    d = _normalize_ohlcv(df)
+    if lookback is not None and lookback > 0 and len(d) > lookback:
+        d = d.iloc[-lookback:]
+    return d
+
+
+# Example usage in chart code:
+# dplot = _prep_for_chart(d1, lookback=180)
+# if dplot.empty:
+#     st.info("No chart data available.")
+# else:
+#     close = _as_series_1d(dplot["close"], "close")
+#     sma20 = close.rolling(20, min_periods=1).mean()
+#     # IMPORTANT: never do `if close > sma20`
+#     is_above = _bool_from_comparison(close, sma20, ">")
+#     # Plot with close/sma20 safely
+
+
+# === PATCH 5: safe boolean conditions in UI logic ===
+# Replace patterns like:
+#   if series_condition:
+# With:
+#   if bool(series_condition.iloc[-1]):      # if you truly want last point
+# or:
+#   if series_condition.any():               # if any point matches
+# or:
+#   if series_condition.all():               # if all points match
+#
+# Replace:
+#   if not d1.empty:
+# with:
+#   if _safe_nonempty(d1):
+
+
+# === PATCH 6: one-line callsite fix for your crashing line ===
+# Old:
+# trend_d1, icon_d1 = compute_trend(d1) if not d1.empty else ("N/A", "⚪")
+# New:
+# trend_d1, icon_d1 = compute_trend(d1)
+
 # -----------------------------
 # MQS ENGINE (Live Data)
 # -----------------------------
