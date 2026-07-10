@@ -1628,6 +1628,7 @@ with tab_pullback:
 # =========================================================
 
 with tab_sentiment:
+with tab_sentiment:
     st.subheader("Dynamic Fear & Greed Structural Proxies")
 
     if historical_data.empty:
@@ -1643,10 +1644,10 @@ with tab_sentiment:
             sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
             if sentiment["status"] == "Active":
-                _normalize_ohlcv(historical_data[selected_ticker]).dropna()
-		close = ticker_df["close"]
-		high = ticker_df["high"]
-		low = ticker_df["low"]
+                ticker_df = _normalize_ohlcv(historical_data[selected_ticker]).dropna()
+                close = ticker_df["close"]
+                high = ticker_df["high"]
+                low = ticker_df["low"]
 
                 # MOMENTUM ENGINE (v2 or legacy)
                 if engine_choice:
