@@ -1664,6 +1664,7 @@ with tab_sentiment:
 				)
 				daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
 				ticker_shock_score = np.nan
+					
 				try:
     				shock = compute_ticker_shock(intraday_df_single, daily_tail_for_shock) or {}
 					if isinstance(shock, dict):
