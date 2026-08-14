@@ -3254,8 +3254,17 @@ with tab_high_movement:
 
         with watchlist_col:
             regime = high_movement_payload.get("regime", {})
+            generated_at_label = high_movement_payload.get("generated_at", "N/A")
+            if generated_at_label != "N/A":
+                try:
+                    generated_at_dt = datetime.fromisoformat(str(generated_at_label))
+                    if generated_at_dt.tzinfo is None:
+                        generated_at_dt = generated_at_dt.replace(tzinfo=timezone.utc)
+                    generated_at_label = generated_at_dt.astimezone(ZoneInfo("Asia/Hong_Kong")).strftime("%Y-%m-%d %H:%M:%S HKT")
+                except (TypeError, ValueError):
+                    pass
             st.caption(
-                f"Generated at: {high_movement_payload.get('generated_at', 'N/A')} | "
+                f"Generated at: {generated_at_label} | "
                 f"Regime: {regime.get('state', 'N/A')} | {regime.get('summary', '')}"
             )
             for idx, candidate in enumerate(high_movement_payload.get("high_movement_top5", []), start=1):
