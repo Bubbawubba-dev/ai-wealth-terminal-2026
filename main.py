@@ -111,6 +111,13 @@ MARKET_OPEN = dt_time(9, 30)
 MARKET_CLOSE = dt_time(16, 0)
 INTRADAY_BAR_MINUTES = 5
 VALID_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+NO_TRADE_WINDOWS = [
+    (dt_time(9, 30), dt_time(9, 45), "Open volatility burst window"),
+    (dt_time(12, 0), dt_time(13, 0), "Low-liquidity lunch window"),
+    (dt_time(15, 30), dt_time(16, 0), "Late-session drift window"),
+]
+EDGE_FRICTION_MARGIN_BY_REGIME = {"calm": 8.0, "elevated": 12.0, "stress": 18.0, "shock": 24.0}
+MIN_RR_BY_REGIME = {"calm": 1.6, "elevated": 1.8, "stress": 2.0, "shock": 2.2}
 
 
 def market_regime_from_shock(market_shock):
@@ -134,6 +141,101 @@ def get_regime_params(market_shock):
     out = table[regime].copy()
     out["regime"] = regime
     return out
+
+
+def compute_ripster_cloud(close, fast_spans=(8, 21), slow_spans=(34, 55)):
+    fast_a = close.ewm(span=fast_spans[0], adjust=False).mean()
+    fast_b = close.ewm(span=fast_spans[1], adjust=False).mean()
+    slow_a = close.ewm(span=slow_spans[0], adjust=False).mean()
+    slow_b = close.ewm(span=slow_spans[1], adjust=False).mean()
+    fast_upper = pd.concat([fast_a, fast_b], axis=1).max(axis=1)
+    fast_lower = pd.concat([fast_a, fast_b], axis=1).min(axis=1)
+    slow_upper = pd.concat([slow_a, slow_b], axis=1).max(axis=1)
+    slow_lower = pd.concat([slow_a, slow_b], axis=1).min(axis=1)
+    fast_mid = (fast_upper + fast_lower) / 2
+    slow_mid = (slow_upper + slow_lower) / 2
+    return {
+        "fast_upper": fast_upper,
+        "fast_lower": fast_lower,
+        "slow_upper": slow_upper,
+        "slow_lower": slow_lower,
+        "fast_mid": fast_mid,
+        "slow_mid": slow_mid,
+    }
+
+
+def classify_cloud_state(price, cloud):
+    fast_upper = float(cloud["fast_upper"].iloc[-1])
+    fast_lower = float(cloud["fast_lower"].iloc[-1])
+    slow_upper = float(cloud["slow_upper"].iloc[-1])
+    slow_lower = float(cloud["slow_lower"].iloc[-1])
+    fast_mid = cloud["fast_mid"]
+    slow_mid = cloud["slow_mid"]
+    px = float(price.iloc[-1])
+
+    fast_slope = float(fast_mid.diff().tail(5).mean()) if len(fast_mid) >= 6 else 0.0
+    slow_slope = float(slow_mid.diff().tail(5).mean()) if len(slow_mid) >= 6 else 0.0
+
+    fast_width = max(fast_upper - fast_lower, 0.0)
+    slow_width = max(slow_upper - slow_lower, 0.0)
+    close_px = max(px, 1e-9)
+    compression = ((fast_width + slow_width) / close_px * 100) < 0.6
+    transition = np.sign(fast_slope) != np.sign(slow_slope)
+
+    if px > fast_upper > fast_lower > slow_upper > slow_lower and fast_slope > 0 and slow_slope > 0:
+        return "bullish trend"
+    if px < fast_lower < fast_upper < slow_lower < slow_upper and fast_slope < 0 and slow_slope < 0:
+        return "bearish trend"
+    if compression:
+        return "compression/chop"
+    if transition:
+        return "transition"
+    return "compression/chop"
+
+
+def cloud_quality_metrics(close, cloud):
+    px = max(float(close.iloc[-1]), 1e-9)
+    fast_mid = cloud["fast_mid"]
+    slow_mid = cloud["slow_mid"]
+    fast_width = cloud["fast_upper"] - cloud["fast_lower"]
+    slow_width = cloud["slow_upper"] - cloud["slow_lower"]
+    cloud_sep_pct = abs(float(fast_mid.iloc[-1] - slow_mid.iloc[-1])) / px * 100
+    slope_strength = (abs(float(fast_mid.diff().tail(5).mean())) + abs(float(slow_mid.diff().tail(5).mean()))) / px * 100
+    expansion_now = max(float(fast_width.iloc[-1] + slow_width.iloc[-1]), 0.0)
+    expansion_prev = float((fast_width + slow_width).tail(20).mean()) if len(fast_width) >= 5 else expansion_now
+    expansion_ratio = expansion_now / (expansion_prev + 1e-9)
+    flips = int((np.sign(fast_mid.diff().tail(20)).diff().abs() > 0).sum()) if len(fast_mid) >= 25 else 0
+    return {
+        "separation_pct": cloud_sep_pct,
+        "slope_strength_pct": slope_strength,
+        "expansion_ratio": expansion_ratio,
+        "flip_count": flips,
+    }
+
+
+def cloud_confidence_score(cloud_state, cloud_metrics):
+    sep_score = float(np.interp(cloud_metrics["separation_pct"], [0.05, 0.2, 0.8], [15, 55, 95]))
+    slope_score = float(np.interp(cloud_metrics["slope_strength_pct"], [0.01, 0.05, 0.2], [10, 50, 95]))
+    expansion_score = float(np.interp(cloud_metrics["expansion_ratio"], [0.7, 1.0, 1.4], [25, 60, 95]))
+    raw = sep_score * 0.4 + slope_score * 0.35 + expansion_score * 0.25
+    if cloud_state == "compression/chop":
+        raw -= 20
+    if cloud_state == "transition":
+        raw -= 14
+    if cloud_metrics["flip_count"] >= 4:
+        raw -= 10
+    return float(np.clip(raw, 0, 100))
+
+
+def setup_quality_grade(confidence, cloud_confidence, rr_ratio, net_edge_bps):
+    composite = confidence * 0.45 + cloud_confidence * 0.35 + np.interp(rr_ratio, [1.0, 1.6, 2.3], [35, 70, 95]) * 0.2
+    if net_edge_bps >= 70 and composite >= 88:
+        return "A+"
+    if composite >= 76:
+        return "A"
+    if composite >= 62:
+        return "B"
+    return "C"
 
 
 def sanitize_universe(tickers):
