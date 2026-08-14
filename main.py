@@ -2033,6 +2033,286 @@ def build_ai_stock_selection_table(
 
 
 # =========================================================
+# 7b. TRADE TRAP ANALYSIS
+# =========================================================
+
+def analyze_trade_trap(ticker, df_history, fundamental_cache, market_shock=50):
+    """
+    Run a trap / risk analysis on a single ticker the user is considering trading.
+
+    Returns a dict with:
+      - valid: bool
+      - error: str (if not valid)
+      - price / price_change_1d_pct
+      - divergence_flags: list of (label, detail) bearish divergence signals
+      - macro_flags: list of (label, detail) macro-context warnings
+      - reasons_not_to_enter: list[str] (up to 3 primary caution flags)
+      - conditions_to_change_view: list[str]
+      - signal / structure / regime
+      - confidence / momentum_score / shock_score
+      - cloud_state / cloud_confidence
+      - rsi / vol_accel / failed_breakout / do_not_trade / do_not_trade_reason
+      - sentiment_score / sentiment_label
+      - beta
+    """
+    result = {
+        "valid": False,
+        "error": "",
+        "ticker": ticker.upper(),
+        "price": None,
+        "price_change_1d_pct": None,
+        "divergence_flags": [],
+        "macro_flags": [],
+        "reasons_not_to_enter": [],
+        "conditions_to_change_view": [],
+        "structure": "N/A",
+        "regime": market_regime_from_shock(market_shock),
+        "confidence": 0.0,
+        "momentum_score": 50.0,
+        "shock_score": 0.0,
+        "cloud_state": "N/A",
+        "cloud_confidence": 0.0,
+        "rsi": None,
+        "vol_accel": None,
+        "failed_breakout": False,
+        "do_not_trade": False,
+        "do_not_trade_reason": "",
+        "sentiment_score": 50,
+        "sentiment_label": "N/A",
+        "beta": None,
+    }
+
+    if df_history.empty:
+        result["error"] = "Historical data unavailable."
+        return result
+
+    available = df_history.columns.get_level_values(0).unique()
+    t = ticker.upper()
+    if t not in available:
+        result["error"] = f"'{t}' not found in the current data universe. Add it via the sidebar and reload."
+        return result
+
+    try:
+        df = df_history[t].dropna()
+        if len(df) < 30:
+            result["error"] = f"Insufficient history for '{t}' (need ≥30 daily bars)."
+            return result
+
+        price = float(df["Close"].iloc[-1])
+        result["price"] = price
+        result["price_change_1d_pct"] = round(
+            (df["Close"].iloc[-1] - df["Close"].iloc[-2]) / df["Close"].iloc[-2] * 100, 2
+        ) if len(df) >= 2 else 0.0
+
+        # --- Price / Volume divergence ---
+        st_mom = compute_short_term_momentum(df)
+        vol_accel = st_mom["VolAccel"]
+        result["vol_accel"] = round(vol_accel, 2)
+
+        divergence_flags = []
+
+        # Rising price but falling volume (classic distribution trap)
+        if result["price_change_1d_pct"] is not None and result["price_change_1d_pct"] > 0.5 and vol_accel < 0.9:
+            divergence_flags.append((
+                "Price↑ / Volume↓ Divergence",
+                f"Price is up {result['price_change_1d_pct']:+.1f}% today but volume is only {vol_accel:.2f}× the 20D average. "
+                "Rising price on shrinking volume is a classic distribution / retail-trap signal.",
+            ))
+
+        # Multi-day price run with decelerating volume
+        if st_mom["3D"] > 4 and vol_accel < 1.0:
+            divergence_flags.append((
+                "3-Day Rally Without Volume Expansion",
+                f"Price is up {st_mom['3D']:+.1f}% over 3 days but volume is below average ({vol_accel:.2f}×). "
+                "Moves lacking volume conviction are vulnerable to sharp reversals.",
+            ))
+
+        # RSI overbought on flat or lower volume
+        sig = unified_signal(df)
+        rsi = sig["rsi"]
+        result["rsi"] = round(rsi, 1)
+        if rsi > 72 and vol_accel < 1.1:
+            divergence_flags.append((
+                "RSI Overbought on Weak Volume",
+                f"RSI(14) = {rsi:.1f} (overbought) while volume acceleration is only {vol_accel:.2f}×. "
+                "Overbought momentum without institutional volume backing is a late-entry trap.",
+            ))
+
+        # Price far above SMA20 (extended move, mean-reversion risk)
+        sma20_dist = (price - sig["sma20"]) / sig["sma20"] * 100 if sig["sma20"] > 0 else 0.0
+        if sma20_dist > 8:
+            divergence_flags.append((
+                f"Price Extended {sma20_dist:.1f}% Above 20D SMA",
+                f"Trading {sma20_dist:.1f}% above the 20-day moving average. Chasing extended moves increases the risk of "
+                "buying into the tail-end of a move when professional sellers are actively distributing.",
+            ))
+
+        result["divergence_flags"] = divergence_flags
+
+        # --- Signal / structure ---
+        structure = classify_structure(sig)
+        result["structure"] = structure
+
+        # --- Intraday / trade plan ---
+        qqq_daily = df_history["QQQ"].dropna() if "QQQ" in available else pd.DataFrame()
+        intraday_snap = fetch_intraday_5m([t])
+        intraday_df = intraday_snap.get(t, pd.DataFrame())
+        intraday_df = normalize_intraday_bars(intraday_df)
+        daily_tail = df.tail(60)
+
+        shock = compute_ticker_shock(intraday_df, daily_tail)
+        result["shock_score"] = round(shock["shock_score"], 1)
+
+        plan = compute_intraday_trade_plan(intraday_df, daily_tail, market_shock=market_shock)
+        result["confidence"] = round(plan["confidence_score"], 1)
+        result["momentum_score"] = round(plan["momentum_score"], 1)
+        result["cloud_state"] = plan["cloud_state"]
+        result["cloud_confidence"] = round(plan["cloud_confidence"], 1)
+        result["failed_breakout"] = plan["failed_breakout"]
+        result["do_not_trade"] = plan["do_not_trade"]
+        result["do_not_trade_reason"] = plan["do_not_trade_reason"] or ""
+
+        # --- Sentiment ---
+        sentiment = calculate_advanced_sentiment(df_history, t)
+        result["sentiment_score"] = sentiment.get("score", 50)
+        result["sentiment_label"] = sentiment.get("label", "N/A")
+
+        # --- Beta / macro context ---
+        beta = compute_beta_to_market(df, qqq_daily) if not qqq_daily.empty else float("nan")
+        result["beta"] = round(beta, 2) if np.isfinite(beta) else None
+
+        regime = market_regime_from_shock(market_shock)
+        result["regime"] = regime
+
+        macro_flags = []
+
+        # High-shock / stress regime risk
+        if market_shock >= 70:
+            macro_flags.append((
+                f"Adverse Macro Regime ({regime.title()})",
+                f"Market Shock Index is {market_shock}/100 — a {regime} environment. "
+                "Entering long positions in a stressed macro backdrop dramatically raises the probability of gap-down reversals and stop-outs.",
+            ))
+        elif market_shock >= 55:
+            macro_flags.append((
+                f"Elevated Market Stress (Shock={market_shock})",
+                f"The market stress index is elevated ({market_shock}/100). "
+                "Intraday setups carry higher invalidation risk when macro momentum is against you.",
+            ))
+
+        # High beta in a stressed market
+        if result["beta"] is not None and result["beta"] > 1.5 and market_shock >= 50:
+            macro_flags.append((
+                f"High Beta ({result['beta']:.2f}×) in Elevated Stress",
+                f"This stock has a 63-day beta of {result['beta']:.2f}× relative to QQQ. "
+                "High-beta names amplify market drawdowns — entering during elevated stress is a high-risk proposition.",
+            ))
+
+        # Price below SMA200 (against macro trend)
+        if price < sig["sma200"] * 0.995:
+            sma200_dist = (price - sig["sma200"]) / sig["sma200"] * 100
+            macro_flags.append((
+                f"Price Below 200D SMA ({sma200_dist:.1f}%)",
+                f"Trading {abs(sma200_dist):.1f}% below the 200-day moving average. "
+                "The macro trend structure is bearish / broken — buying against the dominant trend is typically a low-probability trade.",
+            ))
+
+        # Price below SMA50 (intermediate trend broken)
+        if price < sig["sma50"] * 0.995 and price >= sig["sma200"] * 0.995:
+            sma50_dist = (price - sig["sma50"]) / sig["sma50"] * 100
+            macro_flags.append((
+                f"Intermediate Trend Broken (Price {sma50_dist:.1f}% vs 50D SMA)",
+                f"Price is {abs(sma50_dist):.1f}% below its 50-day moving average. "
+                "Intermediate trend structure is broken — dip-buying in a broken trend often leads to catching a falling knife.",
+            ))
+
+        result["macro_flags"] = macro_flags
+
+        # --- Compile top 3 reasons not to enter ---
+        reasons = []
+
+        # Priority 1: engine do-not-trade
+        if plan["do_not_trade"] and plan["do_not_trade_reason"]:
+            reasons.append(f"AI Engine veto: {plan['do_not_trade_reason']}")
+
+        # Priority 2: failed breakout
+        if plan["failed_breakout"]:
+            reasons.append("Failed breakout detected — the attempted move was rejected and could accelerate to the downside.")
+
+        # Priority 3: divergence flags (most severe first)
+        for label, _ in divergence_flags:
+            if len(reasons) >= 3:
+                break
+            reasons.append(f"Divergence — {label}")
+
+        # Priority 4: macro flags
+        for label, _ in macro_flags:
+            if len(reasons) >= 3:
+                break
+            reasons.append(f"Macro context — {label}")
+
+        # Priority 5: low confidence
+        if len(reasons) < 3 and plan["confidence_score"] < 40:
+            reasons.append(f"Low intraday confidence score ({plan['confidence_score']:.0f}/100) — setup conviction is insufficient to justify risk.")
+
+        # Priority 6: cloud misalignment
+        if len(reasons) < 3 and plan["cloud_state"] not in {"bullish trend", "transition"}:
+            reasons.append(f"Cloud misalignment — current cloud state is '{plan['cloud_state']}', indicating no sustained bullish structure.")
+
+        # Priority 7: regime mismatch for long
+        if len(reasons) < 3 and regime in {"stress", "shock"}:
+            reasons.append(f"Regime mismatch — a {regime} regime strongly favors cash or short exposure over new long entries.")
+
+        # Fill to 3 if still short
+        while len(reasons) < 3:
+            reasons.append("Setup does not meet minimum multi-timeframe alignment thresholds.")
+
+        result["reasons_not_to_enter"] = reasons[:3]
+
+        # --- Conditions to change view ---
+        conditions = []
+
+        if divergence_flags:
+            conditions.append(
+                f"Volume expands to ≥1.3× the 20D average on a green close, confirming real demand rather than distribution."
+            )
+        if rsi > 68:
+            conditions.append(
+                f"RSI resets below 60 via a constructive pullback (not a crash), then re-bases above the 20D SMA with volume support."
+            )
+        if plan["cloud_state"] not in {"bullish trend"}:
+            conditions.append(
+                f"Intraday Ripster Cloud transitions to 'bullish trend' state with cloud confidence ≥65 — indicating structured buyers returning."
+            )
+        if not plan["mtf_cheatcode_pass"]:
+            conditions.append(
+                "Multi-timeframe cheatcode aligns (5m, daily, and weekly cloud structures all bullish simultaneously)."
+            )
+        if macro_flags:
+            conditions.append(
+                f"Market Shock Index drops below 45 (current: {market_shock}) and price reclaims its 50D SMA on above-average volume."
+            )
+        if plan["failed_breakout"]:
+            conditions.append(
+                "Price reclaims the breakout level cleanly on a volume surge ≥1.5× average, invalidating the failed-breakout pattern."
+            )
+        if not conditions:
+            conditions.append("All primary signals align: cloud bullish, MTF pass, volume ≥1.2× average, RSI 50–65, and Market Shock <45.")
+        if len(conditions) < 3:
+            conditions.append(
+                f"Sentiment score improves above 65 (current: {result['sentiment_score']}) with confirmed positive technical structure."
+            )
+
+        result["conditions_to_change_view"] = conditions[:4]
+        result["valid"] = True
+
+    except Exception as e:
+        result["error"] = f"Analysis error: {e}"
+
+    return result
+
+
+# =========================================================
 # 8. USER INTERFACE
 # =========================================================
 
@@ -2128,6 +2408,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
     tab_macro,
     tab_ai,
     tab_top5,
+    tab_trap,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -2137,6 +2418,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
         "🏆 Top 5 Today",
+        "🪤 Trade Trap Checker",
     ]
 )
 
@@ -2652,3 +2934,102 @@ with tab_top5:
             )
     else:
         st.error("Historical data unavailable — cannot compute top 5 candidates.")
+
+# =========================================================
+# TAB 8: TRADE TRAP CHECKER
+# =========================================================
+
+with tab_trap:
+    st.subheader("🪤 Trade Trap Checker")
+    st.caption(
+        "Type any ticker you are considering trading. The engine will analyse whether it looks like a trap for smaller investors, "
+        "flag price/volume divergences, check macro context, and give you 3 concrete reasons to stay out — plus what would need to change for the view to flip."
+    )
+
+    trap_ticker_input = st.text_input(
+        "Enter a ticker to analyse:",
+        placeholder="e.g. TSLA",
+        max_chars=10,
+        key="trap_ticker_input",
+    ).strip().upper()
+
+    if trap_ticker_input:
+        with st.spinner(f"Running trap analysis on {trap_ticker_input}…"):
+            trap_result = analyze_trade_trap(
+                trap_ticker_input,
+                historical_data,
+                fundamental_cache,
+                market_shock=market_shock,
+            )
+
+        if not trap_result["valid"]:
+            st.error(trap_result["error"])
+        else:
+            # ── Header metrics row ──────────────────────────────────────────────
+            st.markdown(f"### Analysis for **{trap_result['ticker']}**")
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1:
+                st.metric("Price", f"${trap_result['price']:,.2f}" if trap_result["price"] else "N/A",
+                          delta=f"{trap_result['price_change_1d_pct']:+.2f}% today" if trap_result["price_change_1d_pct"] is not None else None)
+            with m2:
+                st.metric("Confidence Score", f"{trap_result['confidence']:.0f}/100")
+            with m3:
+                st.metric("Intraday Momentum", f"{trap_result['momentum_score']:.0f}/100")
+            with m4:
+                st.metric("Cloud State", trap_result["cloud_state"])
+            with m5:
+                st.metric("Regime", trap_result["regime"].title())
+
+            m6, m7, m8, m9 = st.columns(4)
+            with m6:
+                st.metric("RSI (14D)", f"{trap_result['rsi']:.1f}" if trap_result["rsi"] is not None else "N/A")
+            with m7:
+                st.metric("Volume Accel", f"{trap_result['vol_accel']:.2f}×" if trap_result["vol_accel"] is not None else "N/A")
+            with m8:
+                st.metric("Sentiment", f"{trap_result['sentiment_score']:.0f} — {trap_result['sentiment_label']}")
+            with m9:
+                beta_str = f"{trap_result['beta']:.2f}×" if trap_result["beta"] is not None else "N/A"
+                st.metric("Beta (63D vs QQQ)", beta_str)
+
+            if trap_result["do_not_trade"]:
+                st.error(f"⛔ AI Engine Veto: {trap_result['do_not_trade_reason']}")
+            if trap_result["failed_breakout"]:
+                st.warning("⚠️ Failed Breakout Detected — the attempted breakout was rejected.")
+
+            st.divider()
+
+            # ── Price / Volume Divergence ────────────────────────────────────────
+            st.markdown("#### 📊 Price / Volume Divergence Signals")
+            if trap_result["divergence_flags"]:
+                for label, detail in trap_result["divergence_flags"]:
+                    with st.expander(f"🔴 {label}", expanded=True):
+                        st.write(detail)
+            else:
+                st.success("✅ No significant price/volume divergence detected at this time.")
+
+            st.divider()
+
+            # ── Macro Context ────────────────────────────────────────────────────
+            st.markdown("#### 🏛️ Macro Context")
+            if trap_result["macro_flags"]:
+                for label, detail in trap_result["macro_flags"]:
+                    with st.expander(f"🟠 {label}", expanded=True):
+                        st.write(detail)
+            else:
+                st.success("✅ No major macro headwinds identified for this trade.")
+
+            st.divider()
+
+            # ── 3 Reasons Not To Enter ───────────────────────────────────────────
+            st.markdown("#### 🚫 3 Reasons Not to Enter This Trade")
+            for i, reason in enumerate(trap_result["reasons_not_to_enter"], 1):
+                st.markdown(f"**{i}.** {reason}")
+
+            st.divider()
+
+            # ── What Would Need to Change ────────────────────────────────────────
+            st.markdown("#### ✅ What Would Need to Be Satisfied to Change This View")
+            for condition in trap_result["conditions_to_change_view"]:
+                st.markdown(f"- {condition}")
+    else:
+        st.info("Enter a ticker above to run the trap analysis.")
