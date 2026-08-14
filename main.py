@@ -2127,6 +2127,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
     tab_sentiment,
     tab_macro,
     tab_ai,
+    tab_top5,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -2135,6 +2136,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
+        "🏆 Top 5 Trading Day Candidates",
     ]
 )
 
@@ -2604,5 +2606,158 @@ with tab_ai:
         if not ai_audit_df.empty:
             with st.expander("Signal Audit Log", expanded=False):
                 st.dataframe(ai_audit_df, use_container_width=True, hide_index=True)
+    else:
+        st.error("Historical data unavailable.")
+
+# =========================================================
+# TAB 7: TOP 5 TRADING DAY CANDIDATES
+# =========================================================
+
+with tab_top5:
+    st.subheader("🏆 Top 5 Trading Day Candidates")
+    st.caption(
+        "Ranked from the existing AI engine outputs — sorted by AI Score descending, "
+        "then screened by confidence threshold, net edge, and regime filters."
+    )
+
+    if not historical_data.empty:
+        top5_df, _top5_diag, _top5_audit, top5_meta = build_ai_stock_selection_table(
+            historical_data,
+            full_universe,
+            fundamental_cache,
+            market_shock=market_shock,
+        )
+
+        if top5_df.empty:
+            st.info(
+                "No qualified candidates found for the current trading day. "
+                "Check data coverage, universe size, and the diagnostics in the AI Engine tab."
+            )
+        else:
+            top5_view = top5_df.head(5).copy()
+
+            # --- Score breakdown summary ---
+            st.markdown("#### Score Breakdown")
+            score_cols = st.columns(4)
+            with score_cols[0]:
+                st.metric("Top AI Score", f"{top5_view['AI Score'].iloc[0]:.1f}")
+            with score_cols[1]:
+                conf_val = top5_view["Confidence Score"].iloc[0] if "Confidence Score" in top5_view.columns else float("nan")
+                st.metric("Top Confidence", f"{conf_val:.1f}" if pd.notna(conf_val) else "N/A")
+            with score_cols[2]:
+                st.metric("Qualified Candidates", len(top5_view))
+            with score_cols[3]:
+                st.metric("Regime", top5_meta.get("regime", "N/A"))
+
+            st.divider()
+
+            # --- Selection Rationale column (top-3 strongest signals per row) ---
+            def _selection_rationale(row):
+                """Build a concise rationale string from the three strongest signals."""
+                signals = []
+                if "AI Score" in row and pd.notna(row["AI Score"]):
+                    signals.append(("AI Score", row["AI Score"], f"AI Score {row['AI Score']:.1f}"))
+                if "Confidence Score" in row and pd.notna(row["Confidence Score"]):
+                    signals.append(("Confidence Score", row["Confidence Score"], f"Conf {row['Confidence Score']:.1f}"))
+                if "Net Edge (bps)" in row and pd.notna(row["Net Edge (bps)"]):
+                    signals.append(("Net Edge (bps)", abs(row["Net Edge (bps)"]), f"Edge {row['Net Edge (bps)']:.1f} bps"))
+                if "Reward/Risk" in row and pd.notna(row["Reward/Risk"]):
+                    signals.append(("Reward/Risk", row["Reward/Risk"], f"R/R {row['Reward/Risk']:.2f}"))
+                if "Intraday Momentum Score" in row and pd.notna(row["Intraday Momentum Score"]):
+                    signals.append(("Intraday Momentum Score", row["Intraday Momentum Score"], f"Momentum {row['Intraday Momentum Score']:.1f}"))
+                if "Sentiment Score" in row and pd.notna(row["Sentiment Score"]):
+                    signals.append(("Sentiment Score", row["Sentiment Score"], f"Sentiment {row['Sentiment Score']:.1f}"))
+                # Boolean confirmations add weight
+                bool_parts = []
+                if bool(row.get("MTF Cheatcode Pass", False)):
+                    bool_parts.append("MTF ✓")
+                if bool(row.get("Volume Confirmation", False)):
+                    bool_parts.append("Vol ✓")
+                if bool(row.get("One-Candle Confirmation", False)):
+                    bool_parts.append("1-Candle ✓")
+                # Sort numeric signals by magnitude and take top 3
+                signals.sort(key=lambda x: x[1], reverse=True)
+                top3 = [s[2] for s in signals[:3]]
+                if bool_parts:
+                    top3.append(" ".join(bool_parts))
+                return " | ".join(top3) if top3 else "—"
+
+            top5_view.insert(1, "Selection Rationale", top5_view.apply(_selection_rationale, axis=1))
+
+            # --- Pass/Fail badge row ---
+            BADGE_SIGNALS = [
+                ("MTF Cheatcode Pass", "MTF Cheatcode"),
+                ("Volume Confirmation", "Volume"),
+                ("One-Candle Confirmation", "One-Candle"),
+            ]
+            THRESHOLD_SIGNALS = {
+                "AI Score": 60,
+                "Confidence Score": 60,
+                "Net Edge (bps)": 0,
+                "Reward/Risk": 1.5,
+            }
+
+            def _badge(val, pass_val=True):
+                if isinstance(pass_val, bool):
+                    return "✅" if bool(val) else "❌"
+                return "✅" if pd.notna(val) and val >= pass_val else "❌"
+
+            badge_rows = []
+            for _, row in top5_view.iterrows():
+                entry = {"Ticker": row["Ticker"]}
+                for col, label in BADGE_SIGNALS:
+                    entry[label] = _badge(row.get(col, False), True)
+                for col, threshold in THRESHOLD_SIGNALS.items():
+                    if col in row:
+                        entry[col] = _badge(row[col], threshold)
+                badge_rows.append(entry)
+
+            badge_df = pd.DataFrame(badge_rows)
+
+            with st.expander("✅ / ❌ Pass-Fail Signal Badges", expanded=True):
+                st.caption("Quick-scan: ✅ = signal passes threshold, ❌ = below threshold or not confirmed.")
+                st.dataframe(badge_df, use_container_width=True, hide_index=True)
+
+            # --- Main ranked table ---
+            review_cols = [
+                "Ticker",
+                "Selection Rationale",
+                "AI Score",
+                "Confidence Score",
+                "Setup Grade",
+                "Regime",
+                "Net Edge (bps)",
+                "Reward/Risk",
+                "Cloud Confidence",
+                "MTF Cheatcode Pass",
+                "Volume Confirmation",
+                "One-Candle Confirmation",
+                "Buy Trigger",
+                "Sell Trigger",
+                "Short-Term Structure",
+                "Intraday Momentum Score",
+                "Sentiment Score",
+                "Market Beta (63D)",
+                "Avg 20D $Vol",
+            ]
+            review_cols = [c for c in review_cols if c in top5_view.columns]
+            st.dataframe(top5_view[review_cols], use_container_width=True, hide_index=True)
+
+            # --- Selection logic explainer ---
+            with st.expander("📋 How the Top 5 are selected (selection flow)", expanded=False):
+                st.markdown(
+                    """
+**Selection flow — from raw universe to final top 5:**
+
+1. **Data availability check** — tickers without at least 120 days of daily history or without usable intraday bars are dropped immediately.
+2. **Price & liquidity filter** — tickers below the minimum price ($5) or with an average 20-day dollar volume below $2 M are removed.
+3. **Regime-aware confidence threshold** — the required Confidence Score is raised in stressed regimes (Shock / Crisis) and lowered in calm ones, so only high-conviction names survive in volatile markets.
+4. **Risk & exposure controls** — names that breach the do-not-trade list, beta limits, or the daily risk budget are excluded.
+5. **AI Score ranking** — surviving candidates are sorted by `AI Score` descending; the top 5 are displayed here.
+
+The **Selection Rationale** column is built only from already-computed fields (no new scoring), showing the three strongest numeric signals and any Boolean confirmations.  
+The **Pass/Fail badges** surface whether each ticker clears the most actionable thresholds at a glance.
+                    """
+                )
     else:
         st.error("Historical data unavailable.")
