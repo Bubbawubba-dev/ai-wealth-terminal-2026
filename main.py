@@ -2127,6 +2127,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
     tab_sentiment,
     tab_macro,
     tab_ai,
+    tab_top5,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -2135,6 +2136,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
+        "🏆 Top 5 Today",
     ]
 )
 
@@ -2606,3 +2608,47 @@ with tab_ai:
                 st.dataframe(ai_audit_df, use_container_width=True, hide_index=True)
     else:
         st.error("Historical data unavailable.")
+
+# =========================================================
+# TAB 7: TOP 5 TODAY
+# =========================================================
+
+with tab_top5:
+    st.subheader("🏆 Top 5 Trading Day Candidates")
+    st.caption("Ranked by AI Score from the AI Stock Selection Engine. Only qualified, regime-aware candidates are shown.")
+    if not historical_data.empty:
+        top5_ai_df, _top5_diag, _top5_audit, top5_meta = build_ai_stock_selection_table(
+            historical_data,
+            full_universe,
+            fundamental_cache,
+            market_shock=market_shock,
+        )
+        if top5_meta.get("strategy_kill_switch"):
+            st.error(f"Strategy kill-switch active: {top5_meta.get('kill_switch_reason', 'Risk control')} — no candidates today.")
+        elif top5_ai_df.empty:
+            st.info("The AI engine found no qualified candidates for today. Check data coverage, market regime, or universe settings.")
+        else:
+            _top5_cols_preferred = [
+                "Ticker",
+                "AI Score",
+                "Confidence Score",
+                "Net Edge (bps)",
+                "Reward/Risk",
+                "Setup Grade",
+                "Regime",
+                "Intraday Momentum Score",
+                "Cloud Confidence",
+                "MTF Cheatcode Pass",
+                "Volume Confirmation",
+            ]
+            _top5_cols_available = [c for c in _top5_cols_preferred if c in top5_ai_df.columns]
+            top5_display = top5_ai_df.head(5)[_top5_cols_available].reset_index(drop=True)
+            top5_display.index = top5_display.index + 1
+            st.dataframe(top5_display, use_container_width=True)
+            st.caption(
+                f"Regime confidence threshold: {top5_meta.get('confidence_threshold', 'N/A')} | "
+                f"Input tickers: {top5_meta.get('input_count', 0)} | "
+                f"Valid tickers: {top5_meta.get('clean_count', 0)}"
+            )
+    else:
+        st.error("Historical data unavailable — cannot compute top 5 candidates.")
