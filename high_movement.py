@@ -213,8 +213,12 @@ def build_high_movement_payload(
 
     prepared.sort(key=lambda row: (-float(row.get("score", 0.0)), row.get("asset", "")))
     selected = []
+    selected_assets = set()
     reserve_pool = []
     for candidate in prepared:
+        asset = candidate.get("asset")
+        if asset in selected_assets:
+            continue
         reasons = _validate_candidate(candidate)
         correlation_hit = False
         if not _hard_rejections(reasons):
@@ -249,20 +253,53 @@ def build_high_movement_payload(
             continue
 
         selected.append(candidate)
+        selected_assets.add(asset)
         if len(selected) >= 5:
             break
 
     if len(selected) < 5:
         reserve_pool.sort(key=lambda row: (len(row.get("reserve_reason_codes", [])), -float(row.get("score", 0.0)), row.get("asset", "")))
         for reserve_candidate in reserve_pool:
+            asset = reserve_candidate.get("asset")
+            if asset in selected_assets:
+                continue
             selected.append(reserve_candidate)
+            selected_assets.add(asset)
             if len(selected) >= 5:
                 break
+
+    fallback_used = False
+    if len(selected) < 5:
+        for candidate in prepared:
+            if len(selected) >= 5:
+                break
+            asset = candidate.get("asset")
+            if asset in selected_assets:
+                continue
+            reasons = _validate_candidate(candidate)
+            if _hard_rejections(reasons):
+                continue
+            if reasons:
+                fallback_candidate = deepcopy(candidate)
+                fallback_candidate["status"] = "waiting"
+                fallback_candidate["confidence"] = int(_clamp(fallback_candidate.get("confidence", 50) - 8, 0, 100))
+                fallback_note = "Final soft-filter fallback used after reserve pass to maintain five high-movement names."
+                fallback_candidate["comparison_note"] = (
+                    f"{fallback_candidate.get('comparison_note', '').strip()} {fallback_note}"
+                ).strip()
+                fallback_candidate["reserve_reason_codes"] = reasons.copy()
+                selected.append(fallback_candidate)
+            else:
+                selected.append(candidate)
+            selected_assets.add(asset)
+            fallback_used = True
 
     warnings = []
     reserve_used = any(candidate.get("reserve_reason_codes") for candidate in selected)
     if reserve_used:
         warnings.append("RESERVE_BACKFILL_USED: one or more names missed a soft filter but passed all hard risk filters.")
+    if fallback_used:
+        warnings.append("SOFT_FILTER_FALLBACK_USED: deterministic fallback promoted additional soft-filter candidates to keep five names.")
     if len(selected) < 5:
         reason_codes = ", ".join(sorted(rejection_counts)) if rejection_counts else "INSUFFICIENT_QUALIFIED_CANDIDATES"
         warnings.append(f"LESS_THAN_5_VALID_CANDIDATES: {reason_codes}")

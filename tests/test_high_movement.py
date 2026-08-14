@@ -138,6 +138,22 @@ class HighMovementTests(unittest.TestCase):
         }
         self.assertTrue(required_keys.issubset(payload["high_movement_top5"][0].keys()))
 
+    def test_reserve_backfill_avoids_duplicate_assets_when_filling_to_five(self):
+        candidates = [
+            make_candidate("AAA"),
+            make_candidate("BBB"),
+            make_candidate("CCC", has_trigger=False),
+            make_candidate("CCC", has_trigger=False),
+            make_candidate("DDD", has_trigger=False),
+            make_candidate("EEE", has_trigger=False),
+            make_candidate("FFF", has_trigger=False),
+        ]
+        payload = build_high_movement_payload(candidates, market_shock=35)
+        assets = [row["asset"] for row in payload["high_movement_top5"]]
+        self.assertEqual(len(assets), 5)
+        self.assertEqual(len(set(assets)), 5)
+        self.assertTrue(any("RESERVE_BACKFILL_USED" in warning for warning in payload["warnings"]))
+
     def test_display_context_exposes_direction_color_confidence_band_and_status(self):
         ctx = build_candidate_display_context(make_candidate(direction="down"))
         self.assertEqual(ctx["direction_color"], "#dc2626")
