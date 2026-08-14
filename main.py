@@ -264,6 +264,116 @@ def mtf_cheatcode_alignment(intraday_close, daily_close):
     }
 
 
+def derive_higher_timeframe_close(close, step=5):
+    if isinstance(close.index, pd.DatetimeIndex):
+        higher_tf = close.resample("W-FRI").last().dropna()
+        if len(higher_tf) >= 4:
+            return higher_tf
+    higher_tf = close.iloc[::step].dropna()
+    if len(higher_tf) == 0 or higher_tf.index[-1] != close.index[-1]:
+        higher_tf = pd.concat([higher_tf, close.tail(1)])
+        higher_tf = higher_tf[~higher_tf.index.duplicated(keep="last")]
+    return higher_tf.dropna()
+
+
+def calculate_ripster_sentiment_components(ticker_df, rsi_score, ma_score, vol_score):
+    close = ticker_df["Close"].dropna()
+    cloud = compute_ripster_cloud(close)
+    cloud_state = classify_cloud_state(close, cloud)
+    cloud_metrics = cloud_quality_metrics(close, cloud)
+    cloud_confidence = cloud_confidence_score(cloud_state, cloud_metrics)
+
+    higher_tf_close = derive_higher_timeframe_close(close)
+    higher_tf_cloud = compute_ripster_cloud(higher_tf_close)
+    higher_tf_state = classify_cloud_state(higher_tf_close, higher_tf_cloud)
+    higher_tf_metrics = cloud_quality_metrics(higher_tf_close, higher_tf_cloud)
+    higher_tf_confidence = cloud_confidence_score(higher_tf_state, higher_tf_metrics)
+    mtf_cheatcode = mtf_cheatcode_alignment(close, higher_tf_close)
+
+    bullish_states = {"bullish trend", "transition"}
+    aligned = cloud_state == "bullish trend" and higher_tf_state == "bullish trend"
+    supportive_alignment = cloud_state in bullish_states and higher_tf_state in bullish_states
+    higher_tf_ma = higher_tf_close.rolling(min(4, len(higher_tf_close))).mean().iloc[-1]
+    higher_tf_trend_up = bool(higher_tf_close.iloc[-1] >= higher_tf_ma) if len(higher_tf_close) else False
+    if aligned and higher_tf_trend_up and mtf_cheatcode["aligned"]:
+        mtf_alignment_score = 100.0
+    elif supportive_alignment and higher_tf_trend_up:
+        mtf_alignment_score = max(82.0, float(mtf_cheatcode["score"]) * 0.9)
+    elif supportive_alignment:
+        mtf_alignment_score = max(68.0, float(mtf_cheatcode["score"]) * 0.8)
+    elif "compression/chop" in {cloud_state, higher_tf_state}:
+        mtf_alignment_score = 38.0
+    else:
+        mtf_alignment_score = 18.0
+
+    trend_confirmation_score = float(
+        np.clip(
+            ma_score * 0.55
+            + cloud_confidence * 0.25
+            + higher_tf_confidence * 0.20
+            + (8 if higher_tf_trend_up else -8),
+            0,
+            100,
+        )
+    )
+
+    higher_tf_return = (
+        ((higher_tf_close.iloc[-1] - higher_tf_close.iloc[-4]) / higher_tf_close.iloc[-4]) * 100
+        if len(higher_tf_close) >= 4 and higher_tf_close.iloc[-4] != 0
+        else 0.0
+    )
+    momentum_confirmation_score = float(
+        np.clip(
+            rsi_score * 0.75
+            + np.interp(higher_tf_return, [-8, 0, 8], [10, 50, 90]) * 0.25,
+            0,
+            100,
+        )
+    )
+
+    volatility_context_score = float(np.clip(vol_score * 0.7 + cloud_confidence * 0.3, 0, 100))
+    structure_label = classify_structure(unified_signal(ticker_df))
+    structure_score = {
+        "Short-Term Breakout 🚀": 92.0,
+        "Healthy Uptrend 📈": 82.0,
+        "Accumulation ⏳": 64.0,
+        "Neutral / Wait ⚪": 42.0,
+    }.get(structure_label, 50.0)
+
+    ripster_score = int(
+        np.average(
+            [
+                mtf_alignment_score,
+                trend_confirmation_score,
+                momentum_confirmation_score,
+                volatility_context_score,
+                structure_score,
+                cloud_confidence,
+                higher_tf_confidence,
+                float(mtf_cheatcode["score"]),
+            ],
+            weights=[0.22, 0.16, 0.14, 0.10, 0.10, 0.12, 0.08, 0.08],
+        )
+    )
+
+    return {
+        "ripster_mtf_score": ripster_score,
+        "ripster_daily_state": cloud_state,
+        "ripster_daily_confidence": round(cloud_confidence, 1),
+        "ripster_weekly_state": higher_tf_state,
+        "ripster_weekly_confidence": round(higher_tf_confidence, 1),
+        "ripster_alignment_score": round(mtf_alignment_score, 1),
+        "ripster_cheatcode_score": round(float(mtf_cheatcode["score"]), 1),
+        "ripster_cheatcode_pass": mtf_cheatcode["aligned"],
+        "ripster_trend_score": round(trend_confirmation_score, 1),
+        "ripster_momentum_score": round(momentum_confirmation_score, 1),
+        "ripster_volatility_score": round(volatility_context_score, 1),
+        "ripster_structure_score": round(structure_score, 1),
+        "ripster_structure_label": structure_label,
+        "ripster_weekly_return_pct": round(higher_tf_return, 2),
+    }
+
+
 def evaluate_breakout_confirmation(close, high, volume):
     if len(close) < 4:
         return {"one_candle_confirmation": False, "failed_breakout": False}
@@ -841,11 +951,12 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
         atr_20 = tr.rolling(20).mean().iloc[-1]
         vol_ratio = atr_5 / atr_20 if atr_20 > 0 else 1
         vol_score = np.interp(vol_ratio, [0.8, 1.5], [80, 20])
+        ripster_metrics = calculate_ripster_sentiment_components(ticker_df, rsi_score, ma_score, vol_score)
 
         composite_score = int(
             np.average(
-                [rsi_score, ma_score, vol_score],
-                weights=[0.4, 0.4, 0.2],
+                [rsi_score, ma_score, vol_score, ripster_metrics["ripster_mtf_score"]],
+                weights=[0.3, 0.25, 0.15, 0.3],
             )
         )
 
@@ -869,6 +980,7 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
                 "rsi_14": round(rsi_score, 1),
                 "ma_deviation_pct": round(price_to_sma_pct, 2),
                 "volatility_ratio": round(vol_ratio, 2),
+                **ripster_metrics,
             },
         }
 
@@ -2117,13 +2229,46 @@ with tab_sentiment:
             sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
             if sentiment["status"] == "Active":
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
                 with col2:
                     st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
                 with col3:
                     st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
+                with col4:
+                    st.metric("Ripster MTF Score", sentiment["metrics"]["ripster_mtf_score"])
+
+                st.markdown("### ☁️ Ripster Multi-Timeframe Read")
+                rip_col1, rip_col2, rip_col3, rip_col4 = st.columns(4)
+                with rip_col1:
+                    st.metric("Alignment Score", sentiment["metrics"]["ripster_alignment_score"])
+                with rip_col2:
+                    st.metric("Daily Cloud", sentiment["metrics"]["ripster_daily_state"])
+                with rip_col3:
+                    st.metric("Weekly Cloud", sentiment["metrics"]["ripster_weekly_state"])
+                with rip_col4:
+                    st.metric(
+                        "Cheatcode Score",
+                        sentiment["metrics"]["ripster_cheatcode_score"],
+                        "PASS" if sentiment["metrics"]["ripster_cheatcode_pass"] else "WATCH",
+                    )
+
+                ripster_components = pd.DataFrame(
+                    [
+                        {"Component": "Daily Cloud Confidence", "Value": sentiment["metrics"]["ripster_daily_confidence"]},
+                        {"Component": "Weekly Cloud Confidence", "Value": sentiment["metrics"]["ripster_weekly_confidence"]},
+                        {"Component": "Weekly Return (%)", "Value": sentiment["metrics"]["ripster_weekly_return_pct"]},
+                        {"Component": "Trend Confirmation", "Value": sentiment["metrics"]["ripster_trend_score"]},
+                        {"Component": "Momentum Confirmation", "Value": sentiment["metrics"]["ripster_momentum_score"]},
+                        {"Component": "Volatility Context", "Value": sentiment["metrics"]["ripster_volatility_score"]},
+                        {
+                            "Component": f"Structure ({sentiment['metrics']['ripster_structure_label']})",
+                            "Value": sentiment["metrics"]["ripster_structure_score"],
+                        },
+                    ]
+                )
+                st.dataframe(ripster_components, use_container_width=True, hide_index=True)
 
                 ticker_df = historical_data[selected_ticker].dropna()
                 close = ticker_df["Close"]
