@@ -883,6 +883,60 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
     available = df_history.columns.get_level_values(0).unique()
     intraday_snap = fetch_intraday_5m(list(available))
 
+    for ticker in universe:
+        if ticker not in available:
+            continue
+
+        try:
+            df = df_history[ticker].dropna()
+            if len(df) < 80:
+                continue
+
+            intraday_df = intraday_snap.get(ticker, pd.DataFrame())
+            if intraday_df.empty:
+                intraday_df = df.tail(5)
+
+            daily_tail = df.tail(30)
+            shock = compute_ticker_shock(intraday_df, daily_tail)
+
+            st_mom = compute_short_term_momentum(df)
+            st_levels = compute_short_term_levels(df)
+
+            sig = unified_signal(df)
+            structure = classify_structure(sig)
+
+            sentiment = calculate_advanced_sentiment(df_history, ticker)
+            sent_score = sentiment.get("score", 50)
+
+            intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail)
+
+            rows.append(
+                {
+                    "Ticker": ticker,
+                    "Price": round(df["Close"].iloc[-1], 2),
+                    "Intraday Return (%)": shock["intraday_return_pct"],
+                    "Daily Vol (%)": shock["daily_vol_pct"],
+                    "Shock Score": shock["shock_score"],
+                    "Short-Term Structure": structure,
+                    "Sentiment Score": sent_score,
+                    "Prev Close": intraday_plan["prev_close"],
+                    "Last Price (5m)": intraday_plan["last_price"],
+                    "Δ vs Prev Close (%)": intraday_plan["distance_from_prev_close_pct"],
+                    "Buy Trigger (≥ +1%)": intraday_plan["buy_trigger"],
+                    "Sell Trigger (≤ prev close)": intraday_plan["sell_trigger"],
+                    "Intraday Momentum Score": intraday_plan["momentum_score"],
+                    "Exit Warning": intraday_plan["exit_warning"],
+                }
+            )
+        except Exception:
+            continue
+
+    return pd.DataFrame(rows)
+
+
+    available = df_history.columns.get_level_values(0).unique()
+    intraday_snap = fetch_intraday_5m(list(available))
+
 
     for ticker in universe:
         if ticker not in available:
@@ -900,7 +954,7 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
             daily_tail = df.tail(30)
             shock = compute_ticker_shock(intraday_df, daily_tail)
 
-	        intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail)
+	intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail)
 
 
             st_mom = compute_short_term_momentum(df)
@@ -987,13 +1041,13 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
                     "Entry Level": entry,
                     "Stop Level": stop,
                     "Target Level": target,
-			        "Prev Close": intraday_plan["prev_close"],
-			        "Last Price (5m)": intraday_plan["last_price"],
-			        "Δ vs Prev Close (%)": intraday_plan["distance_from_prev_close_pct"],
-			        "Buy Trigger (≥ +1%)": intraday_plan["buy_trigger"],
-			        "Sell Trigger (≤ prev close)": intraday_plan["sell_trigger"],
-			        "Intraday Momentum Score": intraday_plan["momentum_score"],
-			        "Exit Warning": intraday_plan["exit_warning"],
+			"Prev Close": intraday_plan["prev_close"],
+			"Last Price (5m)": intraday_plan["last_price"],
+			"Δ vs Prev Close (%)": intraday_plan["distance_from_prev_close_pct"],
+			"Buy Trigger (≥ +1%)": intraday_plan["buy_trigger"],
+			"Sell Trigger (≤ prev close)": intraday_plan["sell_trigger"],
+			"Intraday Momentum Score": intraday_plan["momentum_score"],
+			"Exit Warning": intraday_plan["exit_warning"],
 
                 }
             )
