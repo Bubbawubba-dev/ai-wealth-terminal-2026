@@ -369,10 +369,14 @@ def exit_momentum_fade(df: pd.DataFrame) -> pd.Series:
 def exit_trend_break(df: pd.DataFrame) -> pd.Series:
     close = _series_col(df, "Close")
     low = _series_col(df, "Low")
+    vol = _series_col(df, "Volume")
     ema21 = ema(close, 21)
     swing_low = low.rolling(10).min().shift(1)
-    cond_ema = close < ema21
-    cond_swing = close < swing_low
+    vol_avg = sma(vol, 20)
+    # Require volume expansion to confirm the break (reduces low-liquidity false exits)
+    vol_confirm = vol > vol_avg
+    cond_ema = (close < ema21) & vol_confirm
+    cond_swing = (close < swing_low) & vol_confirm
     return cond_ema | cond_swing
 
 
@@ -404,7 +408,9 @@ def exit_signal(df: pd.DataFrame) -> pd.Series:
     fade = exit_momentum_fade(df)
     trend = exit_trend_break(df)
     structural = exit_structural_failure(df)
-    return fade | trend | structural
+    # Require at least 2 of 3 conditions to fire — reduces single-bar whipsaws
+    count = fade.astype(int) + trend.astype(int) + structural.astype(int)
+    return count >= 2
 
 
 # ==========

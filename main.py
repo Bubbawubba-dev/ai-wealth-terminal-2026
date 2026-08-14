@@ -2178,8 +2178,9 @@ with tab_sentiment:
                         buy_signals.append((close.index[i], close.iloc[i]))
 
                     if (
-                        (close.iloc[i] < sma20.iloc[i] and close.iloc[i - 1] >= sma20.iloc[i - 1])
-                        or rsi_series.iloc[i] < 45
+                        close.iloc[i] < sma20.iloc[i]
+                        and close.iloc[i - 1] < sma20.iloc[i - 1]
+                        and rsi_series.iloc[i] < 40
                     ):
                         sell_signals.append((close.index[i], close.iloc[i]))
 
@@ -2292,8 +2293,11 @@ with tab_sentiment:
                         entry_index = i
 
                     elif position == "LONG" and (
-                        close.iloc[i] < sma20.iloc[i]
-                        or rsi_series.iloc[i] < 45
+                        (
+                            close.iloc[i] < sma20.iloc[i]
+                            and close.iloc[i - 1] < sma20.iloc[i - 1]
+                            and rsi_series.iloc[i] < 40
+                        )
                         or vol_ratio_series.iloc[i] < 0.8
                     ):
                         ret = (close.iloc[i] - entry_price) / entry_price
