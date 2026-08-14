@@ -118,6 +118,14 @@ def apply_regime_adjustments(candidate: dict[str, Any], regime: dict[str, Any]) 
     adjusted["profit_target_1"] = _scale_target(entry, adjusted.get("profit_target_1"), 1 + ((multiplier - 1) * 0.5))
     adjusted["profit_target_2"] = _scale_target(entry, adjusted.get("profit_target_2"), multiplier)
     adjusted["risk_reward_ratio"] = calculate_risk_reward_ratio(adjusted)
+    if entry is not None and adjusted["risk_reward_ratio"] < HIGH_MOVEMENT_FILTERS["min_rr"] and adjusted.get("stop_loss") is not None:
+        stop_distance = abs(entry - float(adjusted["stop_loss"]))
+        min_reward_distance = stop_distance * HIGH_MOVEMENT_FILTERS["min_rr"]
+        if direction == "up":
+            adjusted["profit_target_2"] = round(entry + min_reward_distance, 2)
+        else:
+            adjusted["profit_target_2"] = round(entry - min_reward_distance, 2)
+        adjusted["risk_reward_ratio"] = calculate_risk_reward_ratio(adjusted)
     return adjusted
 
 
@@ -179,6 +187,11 @@ def _validate_candidate(candidate: dict[str, Any]) -> list[str]:
     return reasons
 
 
+def _hard_rejections(reasons: list[str]) -> list[str]:
+    hard_reason_codes = {"INVALID_DIRECTION", "MISSING_STOP_LOSS", "LOW_LIQUIDITY", "HIGH_SPREAD", "RR_BELOW_MIN", "CORRELATION_CAP"}
+    return [reason for reason in reasons if reason in hard_reason_codes]
+
+
 def build_high_movement_payload(
     candidates: list[dict[str, Any]],
     market_shock: float,
@@ -200,9 +213,11 @@ def build_high_movement_payload(
 
     prepared.sort(key=lambda row: (-float(row.get("score", 0.0)), row.get("asset", "")))
     selected = []
+    reserve_pool = []
     for candidate in prepared:
         reasons = _validate_candidate(candidate)
-        if not reasons:
+        correlation_hit = False
+        if not _hard_rejections(reasons):
             same_direction_correlated = 0
             for existing in selected:
                 if existing.get("expected_direction") != candidate.get("expected_direction"):
@@ -210,10 +225,25 @@ def build_high_movement_payload(
                 corr = _pairwise_correlation(existing.get("_recent_returns"), candidate.get("_recent_returns"))
                 if corr >= 0.80:
                     same_direction_correlated += 1
-            if same_direction_correlated >= HIGH_MOVEMENT_FILTERS["max_correlated_same_direction"]:
+            correlation_hit = same_direction_correlated >= HIGH_MOVEMENT_FILTERS["max_correlated_same_direction"]
+            if correlation_hit:
                 reasons.append("CORRELATION_CAP")
+        hard_reasons = _hard_rejections(reasons)
 
+        if hard_reasons:
+            for reason in reasons:
+                rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+            continue
         if reasons:
+            reserve_candidate = deepcopy(candidate)
+            reserve_candidate["status"] = "waiting"
+            reserve_candidate["confidence"] = int(_clamp(reserve_candidate.get("confidence", 50) - 8, 0, 100))
+            reserve_note = "Reserve backfill used to maintain five high-movement names while keeping hard risk filters intact."
+            reserve_candidate["comparison_note"] = (
+                f"{reserve_candidate.get('comparison_note', '').strip()} {reserve_note}"
+            ).strip()
+            reserve_candidate["reserve_reason_codes"] = reasons.copy()
+            reserve_pool.append(reserve_candidate)
             for reason in reasons:
                 rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
             continue
@@ -222,7 +252,17 @@ def build_high_movement_payload(
         if len(selected) >= 5:
             break
 
+    if len(selected) < 5:
+        reserve_pool.sort(key=lambda row: (len(row.get("reserve_reason_codes", [])), -float(row.get("score", 0.0)), row.get("asset", "")))
+        for reserve_candidate in reserve_pool:
+            selected.append(reserve_candidate)
+            if len(selected) >= 5:
+                break
+
     warnings = []
+    reserve_used = any(candidate.get("reserve_reason_codes") for candidate in selected)
+    if reserve_used:
+        warnings.append("RESERVE_BACKFILL_USED: one or more names missed a soft filter but passed all hard risk filters.")
     if len(selected) < 5:
         reason_codes = ", ".join(sorted(rejection_counts)) if rejection_counts else "INSUFFICIENT_QUALIFIED_CANDIDATES"
         warnings.append(f"LESS_THAN_5_VALID_CANDIDATES: {reason_codes}")
