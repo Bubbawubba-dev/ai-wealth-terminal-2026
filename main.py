@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -7,277 +5,6 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-
-
-# === SHAPE-SAFETY MICROPATCH PACK (add near imports/top of file) ===
-from __future__ import annotations
-import pandas as pd
-import numpy as np
-
-def _as_series_1d(x, name: str = "value") -> pd.Series:
-    """
-    Coerce scalar/list/ndarray/Series/DataFrame(1-col) into a 1D Series.
-    Prevents accidental DataFrame-vs-Series shape bugs.
-    """
-    if isinstance(x, pd.DataFrame):
-        if x.shape[1] == 1:
-            return x.iloc[:, 0]
-        raise ValueError(f"{name} is DataFrame with {x.shape[1]} columns; expected 1D.")
-    if isinstance(x, pd.Series):
-        return x
-    if np.isscalar(x):
-        return pd.Series([x], name=name)
-    return pd.Series(x, name=name)
-
-
-def _last_scalar(x, name: str = "value", default=np.nan):
-    """
-    Return the last scalar from scalar/Series/DataFrame(1-col)/array-like.
-    Safe for empty containers.
-    """
-    if x is None:
-        return default
-    if isinstance(x, pd.DataFrame):
-        if x.empty:
-            return default
-        if x.shape[1] == 1:
-            return x.iloc[:, 0].iloc[-1]
-        # If multi-col DF sneaks in, pick first numeric col as fallback
-        num_cols = x.select_dtypes(include=[np.number]).columns
-        if len(num_cols):
-            return x[num_cols[0]].iloc[-1]
-        return default
-    if isinstance(x, pd.Series):
-        return default if x.empty else x.iloc[-1]
-    if np.isscalar(x):
-        return x
-    try:
-        arr = np.asarray(x)
-        return default if arr.size == 0 else arr.reshape(-1)[-1]
-    except Exception:
-        return default
-
-
-def _bool_from_comparison(a, b, op: str, default=False) -> bool:
-    """
-    Compare using last scalar values only, returning a real bool.
-    Avoids 'truth value of a Series is ambiguous'.
-    """
-    av = _last_scalar(a, "a", np.nan)
-    bv = _last_scalar(b, "b", np.nan)
-    if pd.isna(av) or pd.isna(bv):
-        return default
-    if op == ">":
-        return bool(av > bv)
-    if op == "<":
-        return bool(av < bv)
-    if op == ">=":
-        return bool(av >= bv)
-    if op == "<=":
-        return bool(av <= bv)
-    if op == "==":
-        return bool(av == bv)
-    if op == "!=":
-        return bool(av != bv)
-    raise ValueError(f"Unsupported op: {op}")
-
-
-def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Enforce canonical OHLCV frame:
-      - DatetimeIndex sorted ascending
-      - columns: open/high/low/close/volume (float except volume)
-      - no duplicate index rows
-    """
-    if df is None or len(df) == 0:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-
-    out = df.copy()
-
-    # Flatten accidental MultiIndex columns from data providers
-    if isinstance(out.columns, pd.MultiIndex):
-        out.columns = [str(c[-1] if isinstance(c, tuple) else c) for c in out.columns]
-
-    # Standardize column names
-    rename_map = {c: str(c).strip().lower() for c in out.columns}
-    out = out.rename(columns=rename_map)
-
-    # Common aliases
-    aliases = {
-        "adj close": "close",
-        "adjclose": "close",
-        "closing price": "close",
-    }
-    for src, dst in aliases.items():
-        if src in out.columns and dst not in out.columns:
-            out[dst] = out[src]
-
-    needed = ["open", "high", "low", "close"]
-    for col in needed:
-        if col not in out.columns:
-            out[col] = np.nan
-    if "volume" not in out.columns:
-        out["volume"] = np.nan
-
-    # Ensure datetime index
-    if not isinstance(out.index, pd.DatetimeIndex):
-        if "date" in out.columns:
-            out["date"] = pd.to_datetime(out["date"], errors="coerce")
-            out = out.set_index("date")
-        else:
-            out.index = pd.to_datetime(out.index, errors="coerce")
-
-    out = out[~out.index.isna()]
-    out = out[~out.index.duplicated(keep="last")]
-    out = out.sort_index()
-
-    for col in ["open", "high", "low", "close", "volume"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-
-    return out[["open", "high", "low", "close", "volume"]]
-
-
-def _safe_nonempty(df):
-    return df is not None and isinstance(df, pd.DataFrame) and not df.empty
-
-def compute_trend(daily_df: pd.DataFrame):
-    if not _safe_nonempty(daily_df):
-        return "N/A", "⚪"
-
-    d = _normalize_ohlcv(daily_df)
-    if d.empty:
-        return "N/A", "⚪"
-
-    close_s = _as_series_1d(d["close"], "close")
-    sma20_s = close_s.rolling(20, min_periods=20).mean()
-
-    close = _last_scalar(close_s, "close")
-    sma20 = _last_scalar(sma20_s, "sma20")
-
-    if pd.isna(close) or pd.isna(sma20):
-        return "N/A", "⚪"
-    if _bool_from_comparison(close, sma20, ">"):
-        return "Uptrend", "🟢"
-    if _bool_from_comparison(close, sma20, "<"):
-        return "Downtrend", "🔴"
-    return "Sideways", "🟡"
-
-# === PATCH 4: chart section guardrails (use in each chart block) ===
-def _prep_for_chart(df: pd.DataFrame, lookback: int | None = None) -> pd.DataFrame:
-    d = _normalize_ohlcv(df)
-    if lookback is not None and lookback > 0 and len(d) > lookback:
-        d = d.iloc[-lookback:]
-    return d
-
-
-# Example usage in chart code:
-# dplot = _prep_for_chart(d1, lookback=180)
-# if dplot.empty:
-#     st.info("No chart data available.")
-# else:
-#     close = _as_series_1d(dplot["close"], "close")
-#     sma20 = close.rolling(20, min_periods=1).mean()
-#     # IMPORTANT: never do `if close > sma20`
-#     is_above = _bool_from_comparison(close, sma20, ">")
-#     # Plot with close/sma20 safely
-
-
-# === PATCH 5: safe boolean conditions in UI logic ===
-# Replace patterns like:
-#   if series_condition:
-# With:
-#   if bool(series_condition.iloc[-1]):      # if you truly want last point
-# or:
-#   if series_condition.any():               # if any point matches
-# or:
-#   if series_condition.all():               # if all points match
-#
-# Replace:
-#   if not d1.empty:
-# with:
-#   if _safe_nonempty(d1):
-
-
-# === PATCH 6: one-line callsite fix for your crashing line ===
-# Old:
-# trend_d1, icon_d1 = compute_trend(d1) if not d1.empty else ("N/A", "⚪")
-# New:
-# trend_d1, icon_d1 = compute_trend(d1)
-
-# -----------------------------
-# MQS ENGINE (Live Data)
-# -----------------------------
-import yfinance as yf
-from datetime import datetime, timedelta
-
-def fetch_close_prices(tickers, period="3mo"):
-    data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, progress=False)
-    return data["Close"]
-
-def compute_momentum(prices):
-    return (prices.iloc[-1] / prices.iloc[0]) - 1
-
-def compute_stability(prices):
-    return 1 / prices.pct_change().std()
-
-def compute_quality(ticker):
-    info = yf.Ticker(ticker).info
-    pe = info.get("trailingPE", None)
-    profit = info.get("profitMargins", None)
-    if pe and profit:
-        return (profit / pe)
-    return 0.1
-
-def compute_sentiment(prices):
-    last = prices.iloc[-5:]
-    up = (last.diff() > 0).sum()
-    return up / len(last)
-
-def compute_shock(prices):
-    return prices.pct_change().std() * 100
-
-def compute_trend_alignment(prices):
-    short = prices.tail(5).mean()
-    mid = prices.tail(20).mean()
-    long = prices.tail(60).mean()
-    score = 0
-    if short > mid: score += 1
-    if mid > long: score += 1
-    return score / 2
-
-def compute_mqs(ticker, prices):
-    momentum = compute_momentum(prices)
-    stability = compute_stability(prices)
-    quality = compute_quality(ticker)
-    sentiment = compute_sentiment(prices)
-    shock = compute_shock(prices)
-    trend = compute_trend_alignment(prices)
-
-    mqs = (
-        (momentum * 40) +
-        (stability * 10) +
-        (quality * 20) +
-        (sentiment * 20) +
-        (trend * 20)
-    )
-
-    mqs = max(0, min(100, mqs))
-    return round(mqs, 2), shock
-
-groups = {
-    "Tech / AI / Semiconductors": ["NVDA", "AVGO", "SMCI", "AMD", "MRVL"],
-    "Defense & Aerospace": ["LMT", "NOC", "RTX", "KTOS", "HEI"],
-    "Crypto Miners": ["MARA", "RIOT", "IREN", "CLSK", "HIVE"],
-    "Clean Energy / Solar / EV": ["FSLR", "ENPH", "RUN", "TSLA", "BE"]
-}
-
-# =========================================================
-# MOMENTUM ENGINE v2 (external module)
-# =========================================================
-from momentum_engine_v2 import (
-    analyze_ticker,
-    EngineConfig,
-)
 
 # =========================================================
 # 1. CONFIGURATION & STYLING
@@ -324,10 +51,10 @@ if not check_password():
 @st.cache_data(ttl=3600)
 def get_base_universe():
     return [
-        "ASTS", "ANET", "MRVL", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", "ARMG", "UMAC",
-        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "QUBT", "YANG", "NOW", "HIVE", "ONDS", "F", "WYFI", "GOOGL",
+        "ASTS", "ANET", "BZFD", "HUT", "FLEX", "VCYT", "MSFT", "IONQ", "ARM", "ZS", "APP", "NASA", "DPRO", "UMAC",
+        "RKLB", "SNDK", "CYBR", "INTC", "CIFR", "RDDT", "QUBT", "QBTS", "SNOW", "HIVE", "ONDS", "F",
         "AVGO", "MU", "STX", "QCOM", "TE", "BE", "APLD", "CLSK", "CRWV", "KEEL", "CORZ", "ONDS", "IREN", "NBIS",
-        "ENPH", "QCOM", "SMCI", "RGTI", "ASTC", "SHOP", "QID", "NVDA", "SHAZ", "SDS", "SQQQ", "SPXU", "KTOS", "TWM",
+        "ENPH", "QCOM", "SMCI", "RGTI", "ASTC", "SHOP", "FJET", "NVDA", "SHAZ", "WOLF", "AVAV", "RCAT", "KTOS", "BA",
     ]
 
 
@@ -420,102 +147,6 @@ def compute_ticker_shock(intraday_df, daily_tail_df):
     }
 
 
-def compute_uvxy_auto_signal():
-    """Compute UVXY auto-signal based on VIX volatility."""
-    try:
-        vix = yf.download("^VIX", period="10d", interval="1d")["Close"]
-        vix3m = yf.download("^VIX3M", period="10d", interval="1d")["Close"]
-
-        if vix.empty or vix3m.empty:
-            return {"status": "No Data"}
-
-        vix_now = vix.iloc[-1]
-        vix_prev = vix.iloc[-2] if len(vix) > 1 else vix_now
-        vix_change = (vix_now - vix_prev) / vix_prev * 100
-
-        term_structure = vix_now - vix3m.iloc[-1]  # backwardation if > 0
-
-        if vix_now < 15:
-            regime = "Calm"
-        elif vix_now < 20:
-            regime = "Elevated"
-        elif vix_now < 28:
-            regime = "Stress"
-        else:
-            regime = "Shock"
-
-        uvxy_score = (
-            np.interp(vix_now, [12, 20, 28, 40], [10, 40, 70, 95]) * 0.6 +
-            np.interp(vix_change, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
-            (80 if term_structure > 0 else 20) * 0.1
-        )
-        uvxy_score = int(np.clip(uvxy_score, 0, 100))
-
-        if uvxy_score >= 80:
-            auto_signal = "Volatility Shock ⚠️"
-        elif uvxy_score >= 60:
-            auto_signal = "Volatility Expansion ↑"
-        elif uvxy_score <= 30:
-            auto_signal = "Volatility Compression ↓"
-        else:
-            auto_signal = "Neutral / No Edge"
-
-        return {
-            "VIX": round(vix_now, 2),
-            "VIX Change (%)": round(vix_change, 2),
-            "Term Structure": round(term_structure, 2),
-            "Regime": regime,
-            "UVXY Score": uvxy_score,
-            "Auto Signal": auto_signal,
-        }
-
-    except Exception:
-        return {"status": "Error"}
-
-
-def compute_uvxy_vix_indicator():
-    """Compute UVXY/VIX volatility indicator."""
-    try:
-        vix = yf.download("^VIX", period="10d", interval="1d")["Close"]
-        vix3m = yf.download("^VIX3M", period="10d", interval="1d")["Close"]
-
-        if vix.empty or vix3m.empty:
-            return {"status": "No Data"}
-
-        vix_now = vix.iloc[-1]
-        vix_prev = vix.iloc[-2] if len(vix) > 1 else vix_now
-        vix_change = (vix_now - vix_prev) / vix_prev * 100
-
-        term_structure = vix_now - vix3m.iloc[-1]
-
-        if vix_now < 15:
-            regime = "Calm"
-        elif vix_now < 20:
-            regime = "Elevated"
-        elif vix_now < 28:
-            regime = "Stress"
-        else:
-            regime = "Shock"
-
-        uvxy_score = (
-            np.interp(vix_now, [12, 20, 28, 40], [10, 40, 70, 95]) * 0.6 +
-            np.interp(vix_change, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3 +
-            (80 if term_structure > 0 else 20) * 0.1
-        )
-        uvxy_score = int(np.clip(uvxy_score, 0, 100))
-
-        return {
-            "VIX": round(vix_now, 2),
-            "VIX Change (%)": round(vix_change, 2),
-            "Term Structure": round(term_structure, 2),
-            "Regime": regime,
-            "UVXY Score": uvxy_score,
-        }
-
-    except Exception:
-        return {"status": "Error"}
-
-
 @st.cache_data(ttl=86400)
 def fetch_fundamental_metrics(tickers):
     fundamental_records = {}
@@ -549,13 +180,6 @@ def fetch_fundamental_metrics(tickers):
                 "Profit Margin": "N/A",
             }
     return fundamental_records
-
-
-def fetch_ohlcv_daily(ticker):
-    df = yf.download(ticker, period="1y", interval="1d")
-    df = df.dropna()
-    df = df.rename(columns=str.title)
-    return df
 
 # =========================================================
 # 4. CORE TECHNICAL ENGINES
@@ -724,7 +348,7 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             label = "Extreme Fear"
 
         return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(ZoneInfo("Asia/Hong_Kong")),
             "ticker": ticker,
             "score": composite_score,
             "label": label,
@@ -742,11 +366,6 @@ def calculate_sentiment_score(df_history, ticker, lookback=20):
             "score": 50,
             "label": "Neutral (Insufficient Data)",
             "error": str(e),
-            "metrics": {
-                "rsi_14": 50.0,
-                "ma_deviation_pct": 0.0,
-                "volatility_ratio": 1.0,
-            },
         }
 
 
@@ -758,25 +377,11 @@ def calculate_advanced_sentiment(df_history, ticker):
             "score": sentiment_result.get("score", 50),
             "label": sentiment_result.get("label", "Neutral"),
             "timestamp": sentiment_result.get("timestamp"),
-            "metrics": sentiment_result.get("metrics", {
-                "rsi_14": 50.0,
-                "ma_deviation_pct": 0.0,
-                "volatility_ratio": 1.0,
-            }),
+            "metrics": sentiment_result.get("metrics", {}),
             "error": sentiment_result.get("error"),
         }
     except Exception as e:
-        return {
-            "status": "Error",
-            "score": 50,
-            "label": "Error",
-            "error": str(e),
-            "metrics": {
-                "rsi_14": 50.0,
-                "ma_deviation_pct": 0.0,
-                "volatility_ratio": 1.0,
-            },
-        }
+        return {"status": "Error", "score": 50, "label": "Error", "error": str(e)}
 
 
 def calculate_macro_trends(df_history, tickers, fundamental_data):
@@ -907,75 +512,6 @@ def compute_factor_scores(df_history, ticker, fundamentals):
     except Exception:
         return None
 
-# =========================================================
-# SHORT SELLING SIGNALS (Simple & Lightweight)
-# =========================================================
-
-def compute_short_signal(df):
-    """
-    Simple short-selling signal:
-    - RSI > 70 (overbought)
-    - 1-day drop > 2%
-    - Volume spike > 1.5x average
-    """
-    try:
-        close = df["Close"]
-        volume = df["Volume"]
-
-        rsi = unified_signal(df)["rsi"]
-
-        ret_1d = (close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100
-        vol_now = volume.iloc[-1]
-        vol_avg = volume.tail(20).mean()
-
-        score = 0
-        if rsi > 70:
-            score += 1
-        if ret_1d < -2:
-            score += 1
-        if vol_now > vol_avg * 1.5:
-            score += 1
-
-        return {
-            "RSI": round(rsi, 2),
-            "1D Return (%)": round(ret_1d, 2),
-            "Volume Spike (x)": round(vol_now / vol_avg, 2) if vol_avg > 0 else 1,
-            "ShortScore": score,
-        }
-    except Exception:
-        return {"RSI": 50, "1D Return (%)": 0, "Volume Spike (x)": 1, "ShortScore": 0}
-
-
-def short_ideas_scanner(df_history, universe):
-    rows = []
-    for ticker in universe:
-        try:
-            df = df_history[ticker].dropna()
-            if len(df) < 20:
-                continue
-
-            sig = compute_short_signal(df)
-
-            if sig["ShortScore"] >= 2:  # threshold
-                rows.append(
-                    {
-                        "Ticker": ticker,
-                        "RSI": sig["RSI"],
-                        "1D Return (%)": sig["1D Return (%)"],
-                        "Volume Spike (x)": sig["Volume Spike (x)"],
-                        "Short Score": sig["ShortScore"],
-                        "Price": round(df["Close"].iloc[-1], 2),
-                        "Stop (Prev High)": round(df["High"].iloc[-2], 2),
-                        "Target (3% Drop)": round(df["Close"].iloc[-1] * 0.97, 2),
-                    }
-                )
-        except Exception:
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-
-    return pd.DataFrame(rows).sort_values(by="Short Score", ascending=False)
 # =========================================================
 # 5. SHORT-TERM ENGINES (BREAKOUT / PULLBACK / MOMENTUM)
 # =========================================================
@@ -1276,7 +812,7 @@ def build_regime_aware_narrative(
     return lines
 
 # =========================================================
-# 7. AI ENGINE FOR SHORT-TERM TRADING
+# 7. REWRITTEN AI ENGINE FOR SHORT-TERM TRADING
 # =========================================================
 
 def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
@@ -1398,30 +934,6 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
     return pd.DataFrame(rows).sort_values(by="AI Score", ascending=False).reset_index(drop=True)
 
 
-def build_top_picks_today(ai_df, breakout_df, pullback_df, momentum_df, macro_df):
-    if ai_df.empty:
-        return pd.DataFrame()
-
-    df = ai_df.copy()
-
-    df["Breakout_Flag"] = df["Ticker"].isin(breakout_df["Ticker"])
-    df["Pullback_Flag"] = df["Ticker"].isin(pullback_df["Ticker"])
-    df["Momentum_Flag"] = df["Ticker"].isin(momentum_df["Ticker"])
-    df["Macro_Flag"] = df["Ticker"].isin(macro_df["Ticker"])
-
-    df["CompositeRank"] = (
-        df["AI Score"] * 0.50 +
-        df["Breakout_Flag"].astype(int) * 15 +
-        df["Pullback_Flag"].astype(int) * 15 +
-        df["Momentum_Flag"].astype(int) * 10 +
-        df["Macro_Flag"].astype(int) * 10
-    )
-
-    df = df.sort_values(by="CompositeRank", ascending=False)
-    return df.head(10)
-
-
-
 # =========================================================
 # 8. USER INTERFACE
 # =========================================================
@@ -1451,39 +963,6 @@ st.markdown(
     f"**{color} Market Shock Index: {market_shock} — {label}**  "
     f"&nbsp;&nbsp;_Intraday stress vs recent volatility._"
 )
-
-with st.spinner("Syncing UVXY volatility signals..."):
-    uvxy_auto = compute_uvxy_auto_signal()
-
-if "UVXY Score" in uvxy_auto:
-    st.markdown("### 🌪 UVXY Auto‑Signal Engine")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("VIX", uvxy_auto["VIX"])
-    col2.metric("VIX Change (%)", uvxy_auto["VIX Change (%)"])
-    col3.metric("Term Structure", uvxy_auto["Term Structure"])
-
-    st.metric("Volatility Regime", uvxy_auto["Regime"])
-    st.metric("UVXY Score (0–100)", uvxy_auto["UVXY Score"])
-    st.metric("Auto‑Signal", uvxy_auto["Auto Signal"])
-else:
-    st.info("UVXY/VIX data unavailable.")
-
-with st.spinner("Syncing volatility regime..."):
-    uvxy_ind = compute_uvxy_vix_indicator()
-
-if "UVXY Score" in uvxy_ind:
-    st.markdown("### 🌪 UVXY Volatility Indicator")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("VIX", uvxy_ind["VIX"])
-    col2.metric("VIX Change (%)", uvxy_ind["VIX Change (%)"])
-    col3.metric("Term Structure", uvxy_ind["Term Structure"])
-
-    st.metric("Volatility Regime", uvxy_ind["Regime"])
-    st.metric("UVXY Score (0–100)", uvxy_ind["UVXY Score"])
-else:
-    st.info("VIX data unavailable.")
 
 # --- Sidebar universe controls ---
 st.sidebar.markdown("### ➕ Add Custom Stocks")
@@ -1523,8 +1002,6 @@ with st.spinner("Extracting corporate fundamental structures..."):
     tab_sentiment,
     tab_macro,
     tab_ai,
-    tab_shorts,
-    tab_openbell,
 ) = st.tabs(
     [
         "⚡ Short-Term Momentum",
@@ -1533,8 +1010,6 @@ with st.spinner("Extracting corporate fundamental structures..."):
         "🔮 Technical Sentiment",
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
-        "⚠️ Short Ideas",
-        "📈 Open Bell Playbook",
     ]
 )
 
@@ -1580,20 +1055,25 @@ with tab_pullback:
 
         if not df_pullback.empty:
 
+            # Auto-highlighting logic
             def highlight_pullback(row):
                 price = row["Price"]
                 pb382 = row["Pullback 38.2%"]
                 pb618 = row["Pullback 61.8%"]
 
+                # Strong trend pullback (near 38.2%)
                 if abs(price - pb382) <= abs(pb618 - pb382) * 0.25:
                     return ["background-color: #14532d; color: white"] * len(row)
 
+                # Deep dip reversal (near 61.8%)
                 if abs(price - pb618) <= abs(pb618 - pb382) * 0.25:
                     return ["background-color: #1e3a8a; color: white"] * len(row)
 
+                # Trend may be failing (below 61.8%)
                 if price < pb618:
                     return ["background-color: #7f1d1d; color: white"] * len(row)
 
+                # Neutral zone
                 return [""] * len(row)
 
             st.dataframe(
@@ -1607,8 +1087,9 @@ with tab_pullback:
     else:
         st.error("Historical data unavailable.")
 
+
 # =========================================================
-# TAB 4: TECHNICAL SENTIMENT (REGIME-AWARE + TRS GAUGE)
+# TAB 4: TECHNICAL SENTIMENT (REGIME-AWARE)
 # =========================================================
 
 with tab_sentiment:
@@ -1620,74 +1101,22 @@ with tab_sentiment:
         selected_ticker = st.selectbox("Select Target Engine Asset:", full_universe)
 
         if selected_ticker in historical_data.columns.get_level_values(0):
-
-            engine_choice = st.toggle("Use Momentum Engine v2", value=True)
-
-            # SENTIMENT ENGINE
             sentiment = calculate_advanced_sentiment(historical_data, selected_ticker)
 
             if sentiment["status"] == "Active":
-                ticker_df = _normalize_ohlcv(historical_data[selected_ticker]).dropna()
-                close = ticker_df["close"]
-                high = ticker_df["high"]
-                low = ticker_df["low"]
-
-                # MOMENTUM ENGINE (v2 or legacy)
-                if engine_choice:
-                    daily = fetch_ohlcv_daily(selected_ticker)
-                    results = analyze_ticker(
-                        daily=daily,
-                        h4=None,
-                        h1=None,
-                        equity=100_000,
-                        cfg=EngineConfig(),
-                    )
-
-                    mqs = results["mqs"].iloc[-1]
-                    phase = results["phase"].iloc[-1]
-                    entry = results["entry_signal"].iloc[-1]
-                    exit_ = results["exit_signal"].iloc[-1]
-                    long_ok = results["long_ok"].iloc[-1]
-                    narrative = results["narrative"].iloc[-1]
-                else:
-                    # Legacy placeholder logic
-                    mqs = sentiment["score"]
-                    phase = "Legacy Engine"
-                    entry = False
-                    exit_ = False
-                    long_ok = False
-                    narrative = "Legacy engine active — no narrative available."
-
-              	# TICKER SHOCK SCORE
-				intraday_df_single = fetch_intraday_snapshot([selected_ticker]).get(
-					selected_ticker, pd.DataFrame()
-				)
-				daily_tail_for_shock = ticker_df.tail(30).rename(columns=str.title)
-				ticker_shock_score = np.nan
-					
-				try:
-    				shock = compute_ticker_shock(intraday_df_single, daily_tail_for_shock) or {}
-					if isinstance(shock, dict):
-        			ticker_shock_score = shock.get("shock_score", np.nan)
-				except Exception as e:
-    				# replace with your logger
-    				print(f"[ticker_shock] {selected_ticker}: {e}")
-
-                # TOP METRICS ROW
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("MQS", f"{mqs:.1f}")
+                    st.metric("Aggregate Score", sentiment["score"], sentiment["label"])
                 with col2:
-                    st.metric("Phase", phase)
+                    st.metric("RSI (14 Daily)", sentiment["metrics"]["rsi_14"])
                 with col3:
-                    st.metric("Entry Signal", "Yes" if entry else "No")
-                with col4:
-                    st.metric("Exit Signal", "Yes" if exit_ else "No")
+                    st.metric("Volatility Multiplier", f"{sentiment['metrics']['volatility_ratio']}x")
 
-                st.write("### AI Narrative")
-                st.write(narrative)
+                ticker_df = historical_data[selected_ticker].dropna()
+                close = ticker_df["Close"]
+                high = ticker_df["High"]
+                low = ticker_df["Low"]
 
-                # RSI SERIES
                 delta = close.diff()
                 gain = (delta.where(delta > 0, 0)).rolling(14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -1704,12 +1133,24 @@ with tab_sentiment:
                 atr20 = tr.rolling(20).mean()
                 vol_ratio_series = atr5 / atr20
 
-                # PRICE CHART WITH SIGNALS
+                # Price + signals
                 fig_price = go.Figure()
-                fig_price.add_trace(go.Scatter(x=close.index, y=close, name="Close",
-                                               line=dict(color="#38bdf8", width=2)))
-                fig_price.add_trace(go.Scatter(x=sma20.index, y=sma20, name="SMA20",
-                                               line=dict(color="#f59e0b", dash="dash")))
+                fig_price.add_trace(
+                    go.Scatter(
+                        x=close.index,
+                        y=close,
+                        name="Close",
+                        line=dict(color="#38bdf8", width=2),
+                    )
+                )
+                fig_price.add_trace(
+                    go.Scatter(
+                        x=sma20.index,
+                        y=sma20,
+                        name="SMA20",
+                        line=dict(color="#f59e0b", dash="dash"),
+                    )
+                )
 
                 buy_signals = []
                 sell_signals = []
@@ -1731,14 +1172,22 @@ with tab_sentiment:
 
                 for t, p in buy_signals:
                     fig_price.add_annotation(
-                        x=t, y=p, text="⬆ BUY", showarrow=True,
-                        arrowhead=1, font=dict(color="#22c55e")
+                        x=t,
+                        y=p,
+                        text="⬆ BUY",
+                        showarrow=True,
+                        arrowhead=1,
+                        font=dict(color="#22c55e"),
                     )
 
                 for t, p in sell_signals:
                     fig_price.add_annotation(
-                        x=t, y=p, text="⬇ SELL", showarrow=True,
-                        arrowhead=1, font=dict(color="#ef4444")
+                        x=t,
+                        y=p,
+                        text="⬇ SELL",
+                        showarrow=True,
+                        arrowhead=1,
+                        font=dict(color="#ef4444"),
                     )
 
                 fig_price.update_layout(
@@ -1748,13 +1197,17 @@ with tab_sentiment:
                 )
                 st.plotly_chart(fig_price, use_container_width=True)
 
-                # RSI CHART
+                # RSI / Vol / Price views
                 fig_rsi = go.Figure()
-                fig_rsi.add_trace(go.Scatter(
-                    x=rsi_series.index, y=rsi_series,
-                    mode="lines", name="RSI 14",
-                    line=dict(color="#38bdf8", width=2),
-                ))
+                fig_rsi.add_trace(
+                    go.Scatter(
+                        x=rsi_series.index,
+                        y=rsi_series,
+                        mode="lines",
+                        name="RSI 14",
+                        line=dict(color="#38bdf8", width=2),
+                    )
+                )
                 fig_rsi.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, line_width=0)
                 fig_rsi.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, line_width=0)
                 fig_rsi.update_layout(
@@ -1763,28 +1216,38 @@ with tab_sentiment:
                     height=230,
                 )
 
-                # PRICE VS SMA20
                 fig_price2 = go.Figure()
-                fig_price2.add_trace(go.Scatter(
-                    x=close.index, y=close,
-                    name="Close", line=dict(color="#38bdf8", width=2),
-                ))
-                fig_price2.add_trace(go.Scatter(
-                    x=sma20.index, y=sma20,
-                    name="SMA20", line=dict(color="#f59e0b", dash="dash"),
-                ))
+                fig_price2.add_trace(
+                    go.Scatter(
+                        x=close.index,
+                        y=close,
+                        name="Close",
+                        line=dict(color="#38bdf8", width=2),
+                    )
+                )
+                fig_price2.add_trace(
+                    go.Scatter(
+                        x=sma20.index,
+                        y=sma20,
+                        name="SMA20",
+                        line=dict(color="#f59e0b", dash="dash"),
+                    )
+                )
                 fig_price2.update_layout(
                     title=f"{selected_ticker} — Price vs SMA20",
                     template="plotly_dark",
                     height=260,
                 )
 
-                # VOLATILITY RATIO
                 fig_vol = go.Figure()
-                fig_vol.add_trace(go.Scatter(
-                    x=vol_ratio_series.index, y=vol_ratio_series,
-                    name="ATR5 / ATR20", line=dict(color="#ef4444", width=2),
-                ))
+                fig_vol.add_trace(
+                    go.Scatter(
+                        x=vol_ratio_series.index,
+                        y=vol_ratio_series,
+                        name="ATR5 / ATR20",
+                        line=dict(color="#ef4444", width=2),
+                    )
+                )
                 fig_vol.update_layout(
                     title=f"{selected_ticker} — Volatility Ratio",
                     template="plotly_dark",
@@ -1795,7 +1258,7 @@ with tab_sentiment:
                 st.plotly_chart(fig_rsi, use_container_width=True)
                 st.plotly_chart(fig_vol, use_container_width=True)
 
-                # BACKTEST ENGINE
+                # Simple backtest (10–30 day swing)
                 st.markdown("### 📈 Backtest Results (10–30 Day Swing Strategy)")
 
                 returns = []
@@ -1843,7 +1306,6 @@ with tab_sentiment:
                 with col_bt3:
                     st.metric("Avg Holding (bars)", f"{avg_len:.1f}")
 
-                # SIGNAL QUALITY + NARRATIVE
                 trend_phase = classify_structure(unified_signal(ticker_df))
                 signal_quality, narrative_lines, score_components = compute_signal_quality_and_narrative(
                     close,
@@ -1856,16 +1318,13 @@ with tab_sentiment:
                     trend_phase,
                 )
 
-                # TRADE READINESS SCORE (TRS) GAUGE
-                # Blend signal quality with market & ticker shock
-                trs_raw = signal_quality * (
-                    np.interp(market_shock, [0, 100], [1.0, 0.7]) *
-                    np.interp(ticker_shock_score, [0, 100], [1.0, 0.7])
-                )
-                trs = float(np.clip(trs_raw, 0, 100))
+                # Ticker shock for regime-aware narrative
+                intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
+                intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
+                ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
+                ticker_shock_score = ticker_shock_obj["shock_score"]
 
-                st.markdown("### 🧠 Signal Quality & Trade Readiness Score")
-
+                st.markdown("### 🧠 Signal Quality & Regime-Aware Narrative")
                 col_sq1, col_sq2, col_sq3, col_sq4, col_sq5 = st.columns(5)
                 with col_sq1:
                     st.metric("Signal Quality", signal_quality)
@@ -1877,27 +1336,6 @@ with tab_sentiment:
                     st.metric("Volatility Score", score_components["vol_score"])
                 with col_sq5:
                     st.metric("Structure Score", score_components["structure_score"])
-                    
-                # TRS Gauge
-                fig_trs = go.Figure(
-                    go.Indicator(
-                        mode="gauge+number",
-                        value=trs,
-                        title={"text": "Trade Readiness Score (TRS)"},
-                        gauge={
-                            "axis": {"range": [0, 100]},
-                            "bar": {"color": "#22c55e"},
-                            "steps": [
-                                {"range": [0, 30], "color": "#7f1d1d"},
-                                {"range": [30, 60], "color": "#92400e"},
-                                {"range": [60, 80], "color": "#166534"},
-                                {"range": [80, 100], "color": "#22c55e"},
-                            ],
-                        },
-                    )
-                )
-                fig_trs.update_layout(height=260, template="plotly_dark")
-                st.plotly_chart(fig_trs, use_container_width=True)
 
                 regime_lines = build_regime_aware_narrative(
                     market_shock,
@@ -1908,9 +1346,6 @@ with tab_sentiment:
                 )
 
                 st.markdown("#### Regime-Aware Narrative")
-                for line in narrative_lines:
-                    st.markdown(f"- {line}")
-                st.markdown("#### Global & Ticker Regime Narrative")
                 for line in regime_lines:
                     st.markdown(f"- {line}")
 
@@ -1935,462 +1370,16 @@ with tab_macro:
         st.error("Historical data unavailable.")
 
 # =========================================================
-# TAB 6: MOMENTUM ENGINE v2 DASHBOARD (REPLACES AI TAB)
+# TAB 6: AI STOCK SELECTION ENGINE
 # =========================================================
 
 with tab_ai:
-    st.subheader("⚡ Momentum Engine v2 — Multi‑Factor Trade Intelligence")
-
-    if historical_data.empty:
+    st.subheader("🤖 AI Stock Selection Engine — Short-Term Tactical Focus")
+    if not historical_data.empty:
+        ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
+        if not ai_df.empty:
+            st.dataframe(ai_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("AI engine did not find any qualified candidates (check data coverage and universe).")
+    else:
         st.error("Historical data unavailable.")
-        st.stop()
-
-    # --- Engine Mode ---
-    st.markdown("### ⚙️ Engine Configuration")
-    preset = st.radio(
-        "Select Engine Mode:",
-        ["Balanced", "Aggressive", "Conservative"],
-        horizontal=True,
-    )
-
-    if preset == "Balanced":
-        cfg = EngineConfig()
-    elif preset == "Aggressive":
-        cfg = EngineConfig(
-            momentum_weight=1.3,
-            volatility_weight=0.7,
-            trend_weight=1.2,
-            risk_weight=0.8,
-        )
-    else:  # Conservative
-        cfg = EngineConfig(
-            momentum_weight=0.8,
-            volatility_weight=1.2,
-            trend_weight=1.0,
-            risk_weight=1.3,
-        )
-
-    # --- Multi‑Ticker Scan ---
-    scan_results = []
-    for ticker in full_universe:
-        try:
-            daily = fetch_ohlcv_daily(selected_ticker)
-            if daily.empty or len(daily) < 50:
-                continue
-
-            res = analyze_ticker(
-                daily=daily,
-                h4=None,
-                h1=None,
-                equity=100_000,
-                cfg=cfg,
-            )
-
-            scan_results.append({
-                "Ticker": ticker,
-                "MQS": res["mqs"].iloc[-1],
-                "Phase": res["phase"].iloc[-1],
-                "Entry": res["entry_signal"].iloc[-1],
-                "Exit": res["exit_signal"].iloc[-1],
-                "Long OK": res["long_ok"].iloc[-1],
-                "Narrative": res["narrative"].iloc[-1],
-            })
-        except Exception:
-            continue
-
-    if not scan_results:
-        st.warning("No valid tickers found for Momentum Engine v2.")
-        st.stop()
-
-    df_scan = pd.DataFrame(scan_results).sort_values("MQS", ascending=False)
-
-    # --- Top Picks Table ---
-    st.markdown("### 🔝 Top Momentum Engine v2 Picks Today")
-    st.dataframe(
-        df_scan[["Ticker", "MQS", "Phase", "Entry", "Exit", "Long OK"]],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    # --- Select a Ticker for Deep Dive ---
-    st.markdown("### 🔍 Deep Dive Analysis")
-    selected = st.selectbox("Select a ticker to analyze:", df_scan["Ticker"].tolist())
-
-    daily = fetch_ohlcv_daily(selected_ticker)
-    res = analyze_ticker(
-        daily=daily,
-        h4=None,
-        h1=None,
-        equity=100_000,
-        cfg=cfg,
-    )
-
-    mqs = res["mqs"].iloc[-1]
-    phase = res["phase"].iloc[-1]
-    entry = res["entry_signal"].iloc[-1]
-    exit_ = res["exit_signal"].iloc[-1]
-    long_ok = res["long_ok"].iloc[-1]
-    narrative = res["narrative"].iloc[-1]
-
-    # =========================================================
-    # MULTI‑TIMEFRAME TREND ALIGNMENT (D1 / H4 / H1)
-    # =========================================================
-    st.markdown("### 🧭 Multi‑Timeframe Trend Alignment")
-
-    def compute_trend_label(df):
-        if df is None or df.empty or "Close" not in df.columns:
-            return "N/A", "⚪"
-
-        close_col = df["Close"]
-        if isinstance(close_col, pd.DataFrame):
-            if close_col.shape[1] == 0:
-                return "N/A", "⚪"
-            close_series = close_col.iloc[:, 0]
-        else:
-            close_series = close_col
-
-        close_series = pd.to_numeric(close_series, errors="coerce").dropna()
-        if close_series.empty:
-            return "N/A", "⚪"
-
-        close = float(close_series.iloc[-1])
-        sma20 = float(close_series.rolling(20).mean().iloc[-1]) if len(close_series) >= 20 else close
-        sma50 = float(close_series.rolling(50).mean().iloc[-1]) if len(close_series) >= 50 else sma20
-        sma200 = float(close_series.rolling(200).mean().iloc[-1]) if len(close_series) >= 200 else sma50
-
-        score = 0
-        if close > sma20:
-            score += 1
-        if close > sma50:
-            score += 1
-        if close > sma200:
-            score += 1
-
-        if score == 3:
-            return "Strong Uptrend", "🟢"
-        elif score == 2:
-            return "Uptrend", "🟡"
-        elif score == 1:
-            return "Weak / Mixed", "🟠"
-        else:
-            return "Downtrend", "🔴"
-
-    close_col = df["Close"]
-    if isinstance(close_col, pd.DataFrame):
-        if close_col.shape[1] == 0:
-            return "N/A", "⚪"
-        close_series = close_col.iloc[:, 0]
-    else:
-        close_series = close_col
-
-    close_series = pd.to_numeric(close_series, errors="coerce").dropna()
-    if close_series.empty:
-        return "N/A", "⚪"
-
-    close = float(close_series.iloc[-1])
-    sma20 = float(close_series.rolling(20).mean().iloc[-1]) if len(close_series) >= 20 else close
-    sma50 = float(close_series.rolling(50).mean().iloc[-1]) if len(close_series) >= 50 else sma20
-    sma200 = float(close_series.rolling(200).mean().iloc[-1]) if len(close_series) >= 200 else sma50
-
-    score = 0
-    if close > sma20:
-        score += 1
-    if close > sma50:
-        score += 1
-    if close > sma200:
-        score += 1
-
-    if score == 3:
-        return "Strong Uptrend", "🟢"
-    elif score == 2:
-        return "Uptrend", "🟡"
-    elif score == 1:
-        return "Weak / Mixed", "🟠"
-    else:
-        return "Downtrend", "🔴"
-  
-    # =========================================================
-    # KPI ROW
-    # =========================================================
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("MQS", f"{mqs:.1f}")
-    col2.metric("Phase", phase)
-    col3.metric("Entry Signal", "Yes" if entry else "No")
-    col4.metric("Exit Signal", "Yes" if exit_ else "No")
-
-    # =========================================================
-    # TRADE BIAS + CONFIDENCE METER
-    # =========================================================
-    st.markdown("### 🎯 Trade Bias & Confidence")
-
-    if entry and long_ok and mqs > 60:
-        bias = "Bullish"
-        bias_color = "🟢"
-    elif exit_ or mqs < 40:
-        bias = "Bearish"
-        bias_color = "🔴"
-    else:
-        bias = "Neutral"
-        bias_color = "🟡"
-
-    confidence = 0
-    confidence += np.interp(mqs, [0, 100], [10, 40])
-
-	trend_d1, icon_d1 = compute_trend_label(daily)
-	trend_h4, icon_h4 = ("N/A", "⚪")
-	trend_h1, icon_h1 = ("N/A", "⚪")
-
-    alignment_score = 0
-    alignment_score += 1 if "Uptrend" in trend_d1 else 0
-    alignment_score += 1 if "Uptrend" in trend_h4 else 0
-    alignment_score += 1 if "Uptrend" in trend_h1 else 0
-    confidence += alignment_score * 15
-
-    if "Breakout" in phase or "Uptrend" in phase:
-        confidence += 20
-    elif "Weak" in phase:
-        confidence += 5
-
-    if entry:
-        confidence += 15
-    if exit_:
-        confidence -= 20
-
-    confidence = float(np.clip(confidence, 0, 100))
-
-    fig_conf = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=confidence,
-            title={"text": f"Trade Bias: {bias_color} {bias}"},
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#38bdf8"},
-                "steps": [
-                    {"range": [0, 30], "color": "#7f1d1d"},
-                    {"range": [30, 60], "color": "#92400e"},
-                    {"range": [60, 80], "color": "#166534"},
-                    {"range": [80, 100], "color": "#22c55e"},
-                ],
-            },
-        )
-    )
-    fig_conf.update_layout(height=260, template="plotly_dark")
-    st.plotly_chart(fig_conf, use_container_width=True)
-
-    # =========================================================
-    # TREND STRENGTH GAUGE
-    # =========================================================
-    st.markdown("### 📈 Trend Strength Gauge")
-
-    daily_norm = _normalize_ohlcv(daily)
-    close_price = daily_norm["close"].iloc[-1]
-    sma20 = daily_norm["close"].rolling(20).mean().iloc[-1]
-    sma50 = daily_norm["close"].rolling(50).mean().iloc[-1]
-	***sma200 = daily_norm["close"].rolling(200).mean().iloc[-1] if len(daily_norm) >= 200 else sma50
-
-    dist20 = (close_price - sma20) / sma20 * 100 if sma20 else 0
-    dist50 = (close_price - sma50) / sma50 * 100 if sma50 else 0
-    dist200 = (close_price - sma200) / sma200 * 100 if sma200 else 0
-
-    trend_strength = (
-        np.interp(dist20, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.4
-        + np.interp(dist50, [-5, 0, 5, 10], [10, 40, 70, 90]) * 0.3
-        + np.interp(dist200, [-10, 0, 10, 20], [5, 30, 60, 90]) * 0.3
-    )
-    trend_strength = float(np.clip(trend_strength, 0, 100))
-
-    fig_trend = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=trend_strength,
-            title={"text": "Trend Strength"},
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#38bdf8"},
-                "steps": [
-                    {"range": [0, 30], "color": "#7f1d1d"},
-                    {"range": [30, 60], "color": "#92400e"},
-                    {"range": [60, 80], "color": "#166534"},
-                    {"range": [80, 100], "color": "#22c55e"},
-                ],
-            },
-        )
-    )
-    fig_trend.update_layout(height=260, template="plotly_dark")
-    st.plotly_chart(fig_trend, use_container_width=True)
-
-    # =========================================================
-    # ENGINE NARRATIVE
-    # =========================================================
-    st.markdown("### 🧠 Engine Narrative")
-    st.write(narrative)
-
-    # =========================================================
-    # MINI PRICE CHART
-    # =========================================================
-    st.markdown("### 📉 Price Chart")
-
-    df = _normalize_ohlcv(daily).tail(120)
-    fig = go.Figure()
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index,
-            open=df["open"],
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            name=selected,
-        )
-    )
-    fig.update_layout(
-        height=320,
-        template="plotly_dark",
-        title=f"{selected} — Momentum Engine v2 Chart",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # =========================================================
-    # ADDITIONAL METRICS
-    # =========================================================
-    st.markdown("### 📈 Additional Metrics")
-    st.write(
-        "Momentum Engine v2 integrates trend, volatility, risk, and structural signals "
-        "to produce a unified MQS score."
-    )
-
-
-# =========================================================
-# TAB 7: SHORT OPPORTUNITIES
-# =========================================================
-
-with tab_shorts:
-    st.subheader("⚠️ Short Opportunities Today")
-
-    crash_mode = st.toggle(
-        "🔥 Market Crash Mode (More Aggressive Short Scanning)",
-        value=False
-    )
-
-    if historical_data.empty:
-        st.error("Historical data not loaded. Please run the app again.")
-        st.stop()
-
-    # Scanner currently takes 2 args; crash_mode toggle kept for UI extension
-    short_df = short_ideas_scanner(historical_data, full_universe)
-
-    if short_df.empty:
-        st.info("No short setups detected today.")
-        st.stop()
-
-    st.dataframe(short_df, use_container_width=True, hide_index=True)
-
-    st.markdown("### 📉 Mini Charts for Short Candidates")
-    for _, row in short_df.iterrows():
-        ticker = row["Ticker"]
-
-        try:
-            df = historical_data[ticker].dropna().tail(60)
-        except Exception:
-            continue
-
-        if df.empty:
-            continue
-
-        fig = go.Figure()
-        fig.add_trace(
-            go.Candlestick(
-                x=df.index,
-                open=df["open"],
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                name=ticker,
-            )
-        )
-        fig.update_layout(
-            height=250,
-            margin=dict(l=10, r=10, t=25, b=10),
-            template="plotly_dark",
-            showlegend=False,
-            title=f"{ticker} — Mini Chart",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-
-# =========================================================
-# TAB 8: OPEN BELL PLAYBOOK (single canonical block)
-# =========================================================
-
-with tab_openbell:
-    st.markdown("<h1 style='text-align:center;'>📈 Open Bell Playbook</h1>", unsafe_allow_html=True)
-    st.markdown("Live MQS scoring using Yahoo Finance data.")
-
-    results = []
-
-    for group_name, tickers in groups.items():
-        st.markdown(f"## 🔹 {group_name}")
-        prices = fetch_close_prices(tickers)
-
-        group_scores = []
-        for ticker in tickers:
-            try:
-                p = prices[ticker].dropna()
-                if len(p) < 10:
-                    continue
-                mqs, shock = compute_mqs(ticker, p)
-                group_scores.append((ticker, mqs, shock))
-            except Exception:
-                continue
-
-        df_group = pd.DataFrame(group_scores, columns=["Ticker", "MQS", "Shock"])
-        if df_group.empty:
-            st.info("No valid data for this sector group.")
-            continue
-
-        df_group = df_group.sort_values("MQS", ascending=False)
-        st.dataframe(df_group, use_container_width=True, hide_index=True)
-
-        for row in df_group.itertuples():
-            results.append((row.Ticker, row.MQS, row.Shock, group_name))
-
-    st.markdown("---")
-    st.markdown("## ⭐ Combined Top‑10 Across All Sectors")
-
-    if results:
-        combined = pd.DataFrame(results, columns=["Ticker", "MQS", "Shock", "Sector"])
-        combined = combined.sort_values("MQS", ascending=False).head(10)
-        st.dataframe(combined, use_container_width=True, hide_index=True)
-    else:
-        st.info("No combined results available right now.")
-
-    st.markdown("---")
-    st.markdown("## 🕒 Pre‑Market Checklist")
-    st.write("""
-- Higher lows on 5‑min  
-- Pre‑market volume > 30% of average  
-- Sentiment > 0.55  
-- Shock Score < 40  
-- Price above Friday VWAP  
-""")
-
-    st.markdown("---")
-    st.markdown("## 🚀 Opening Bell Strategy")
-    st.write("""
-**Look for:**
-- Strong first 5‑min candle  
-- Low wick rejection  
-- Volume > 1.5× average  
-- Break above pre‑market high  
-
-**Avoid:**
-- First‑minute spikes  
-- High wick reversals  
-- Shock Score > 50  
-- MQS < 60  
-""")
-
-    st.markdown("---")
-    st.success("Live Open Bell Playbook loaded successfully.")
-    st.markdown("---")
-    st.info("This tab updates automatically when you refresh the app before market open.")
