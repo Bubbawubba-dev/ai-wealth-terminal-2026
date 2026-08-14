@@ -95,6 +95,15 @@ def fetch_intraday_snapshot(tickers, interval="5m", days=3):
     except Exception:
         return {}
 
+# =========================================================
+# 3A. INTRADAY 5-MIN WRAPPER (NEW)
+# =========================================================
+
+@st.cache_data(ttl=120)
+def fetch_intraday_5m(tickers, days=2):
+    # Always use 5-minute bars for day trading logic
+    return fetch_intraday_snapshot(tickers, interval="5m", days=days)
+
 
 def compute_market_shock_index(index_df, vix_df=None, breadth_pct=None):
     if index_df is None or index_df.empty:
@@ -815,13 +824,65 @@ def build_regime_aware_narrative(
 # 7. REWRITTEN AI ENGINE FOR SHORT-TERM TRADING
 # =========================================================
 
+# =========================================================
+# 7A. INTRADAY DAY-TRADING ENGINE (NEW)
+# =========================================================
+
+def compute_intraday_trade_plan(intraday_df, daily_df):
+    if intraday_df is None or intraday_df.empty or daily_df is None or daily_df.empty:
+        return {
+            "prev_close": None,
+            "last_price": None,
+            "buy_trigger": False,
+            "sell_trigger": False,
+            "distance_from_prev_close_pct": 0.0,
+            "momentum_score": 50.0,
+            "exit_warning": False,
+        }
+
+    prev_close = float(daily_df["Close"].iloc[-1])
+    last_price = float(intraday_df["Close"].iloc[-1])
+    distance_pct = (last_price - prev_close) / prev_close * 100
+
+    buy_trigger = distance_pct >= 1.0
+    sell_trigger = last_price <= prev_close
+
+    close = intraday_df["Close"]
+    volume = intraday_df["Volume"]
+
+    ret_15m = ((close.iloc[-1] - close.iloc[-4]) / close.iloc[-4] * 100) if len(close) >= 4 else 0.0
+    ret_30m = ((close.iloc[-1] - close.iloc[-7]) / close.iloc[-7] * 100) if len(close) >= 7 else 0.0
+
+    vol_now = volume.iloc[-1]
+    vol_avg = volume.tail(30).mean()
+    vol_accel = vol_now / vol_avg if vol_avg > 0 else 1.0
+
+    raw_mom = (ret_15m * 0.4) + (ret_30m * 0.4) + ((vol_accel - 1.0) * 100 * 0.2)
+    momentum_score = float(np.clip(raw_mom, -50, 100))
+
+    exit_warning = (
+        (distance_pct < 0.5 and not sell_trigger) or
+        (momentum_score < 20)
+    )
+
+    return {
+        "prev_close": round(prev_close, 2),
+        "last_price": round(last_price, 2),
+        "buy_trigger": buy_trigger,
+        "sell_trigger": sell_trigger,
+        "distance_from_prev_close_pct": round(distance_pct, 2),
+        "momentum_score": round(momentum_score, 1),
+        "exit_warning": exit_warning,
+    }
+
 def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
     rows = []
     if df_history.empty:
         return pd.DataFrame()
 
     available = df_history.columns.get_level_values(0).unique()
-    intraday_snap = fetch_intraday_snapshot(list(available))
+    intraday_snap = fetch_intraday_5m(list(available))
+
 
     for ticker in universe:
         if ticker not in available:
@@ -838,6 +899,9 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
 
             daily_tail = df.tail(30)
             shock = compute_ticker_shock(intraday_df, daily_tail)
+
+	        intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail)
+
 
             st_mom = compute_short_term_momentum(df)
             st_levels = compute_short_term_levels(df)
@@ -923,6 +987,14 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
                     "Entry Level": entry,
                     "Stop Level": stop,
                     "Target Level": target,
+			        "Prev Close": intraday_plan["prev_close"],
+			        "Last Price (5m)": intraday_plan["last_price"],
+			        "Δ vs Prev Close (%)": intraday_plan["distance_from_prev_close_pct"],
+			        "Buy Trigger (≥ +1%)": intraday_plan["buy_trigger"],
+			        "Sell Trigger (≤ prev close)": intraday_plan["sell_trigger"],
+			        "Intraday Momentum Score": intraday_plan["momentum_score"],
+			        "Exit Warning": intraday_plan["exit_warning"],
+
                 }
             )
         except Exception:
