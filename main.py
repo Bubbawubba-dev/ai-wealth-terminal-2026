@@ -3,7 +3,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
 
 # =========================================================
@@ -88,10 +89,10 @@ def fetch_intraday_snapshot(tickers, interval="5m", days=3):
         if isinstance(data.columns, pd.MultiIndex):
             out = {}
             for t in data.columns.get_level_values(0).unique():
-                out[t] = data[t].dropna()
+                out[t] = normalize_intraday_bars(data[t].dropna())
             return out
         else:
-            return {tickers[0]: data.dropna()}
+            return {tickers[0]: normalize_intraday_bars(data.dropna())}
     except Exception:
         return {}
 
@@ -103,6 +104,329 @@ def fetch_intraday_snapshot(tickers, interval="5m", days=3):
 def fetch_intraday_5m(tickers, days=2):
     # Always use 5-minute bars for day trading logic
     return fetch_intraday_snapshot(tickers, interval="5m", days=days)
+
+
+MARKET_TZ = "America/New_York"
+MARKET_OPEN = dt_time(9, 30)
+MARKET_CLOSE = dt_time(16, 0)
+INTRADAY_BAR_MINUTES = 5
+VALID_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+
+
+def market_regime_from_shock(market_shock):
+    if market_shock >= 80:
+        return "shock"
+    if market_shock >= 60:
+        return "stress"
+    if market_shock >= 40:
+        return "elevated"
+    return "calm"
+
+
+def get_regime_params(market_shock):
+    regime = market_regime_from_shock(market_shock)
+    table = {
+        "calm": {"base_trigger": 0.6, "atr_mult": 0.55, "rv_mult": 0.40, "min_conf": 48},
+        "elevated": {"base_trigger": 0.8, "atr_mult": 0.70, "rv_mult": 0.55, "min_conf": 56},
+        "stress": {"base_trigger": 1.0, "atr_mult": 0.90, "rv_mult": 0.70, "min_conf": 64},
+        "shock": {"base_trigger": 1.2, "atr_mult": 1.10, "rv_mult": 0.90, "min_conf": 72},
+    }
+    out = table[regime].copy()
+    out["regime"] = regime
+    return out
+
+
+def sanitize_universe(tickers):
+    cleaned = []
+    invalid = []
+    duplicates = []
+    seen = set()
+
+    for raw in tickers or []:
+        t = str(raw).strip().upper()
+        if not t:
+            continue
+        if t in seen:
+            duplicates.append(t)
+            continue
+        seen.add(t)
+        if not VALID_TICKER_RE.match(t):
+            invalid.append(t)
+            continue
+        cleaned.append(t)
+
+    return cleaned, sorted(set(invalid)), sorted(set(duplicates))
+
+
+def normalize_intraday_bars(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    idx = pd.DatetimeIndex(out.index)
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    idx = idx.tz_convert(MARKET_TZ)
+    out.index = idx
+    out = out.sort_index()
+    out = out[out.index.dayofweek < 5]
+    out = out.between_time(MARKET_OPEN.strftime("%H:%M"), MARKET_CLOSE.strftime("%H:%M"))
+    return out.dropna(subset=["Close"])
+
+
+def compute_previous_session_close(intraday_df, daily_df):
+    intraday_df = normalize_intraday_bars(intraday_df)
+    if intraday_df.empty:
+        if daily_df is None or daily_df.empty:
+            return None
+        return float(daily_df["Close"].iloc[-1])
+
+    current_session = intraday_df.index[-1].date()
+    prev_session_mask = intraday_df.index.date < current_session
+    prev_session = intraday_df.loc[prev_session_mask]
+    if not prev_session.empty:
+        return float(prev_session["Close"].iloc[-1])
+
+    if daily_df is None or daily_df.empty:
+        return float(intraday_df["Close"].iloc[-1])
+
+    idx = pd.DatetimeIndex(daily_df.index)
+    daily_dates = idx.tz_localize(None) if idx.tz is not None else idx
+    before_mask = daily_dates.date < current_session
+    if before_mask.any():
+        return float(daily_df.loc[before_mask, "Close"].iloc[-1])
+    return float(daily_df["Close"].iloc[-1])
+
+
+def assess_intraday_data_quality(intraday_df, now_ts=None):
+    intraday_df = normalize_intraday_bars(intraday_df)
+    if intraday_df.empty:
+        return {
+            "usable": False,
+            "fresh": False,
+            "stale_minutes": None,
+            "missing_ratio": 1.0,
+            "warnings": ["No intraday bars available after market-hours filtering."],
+            "last_bar": None,
+            "bars_in_session": 0,
+        }
+
+    now_ny = now_ts or datetime.now(ZoneInfo(MARKET_TZ))
+    last_bar = intraday_df.index[-1]
+    stale_minutes = (now_ny - last_bar).total_seconds() / 60.0
+
+    session_mask = intraday_df.index.date == last_bar.date()
+    session_df = intraday_df.loc[session_mask]
+
+    session_open = datetime.combine(last_bar.date(), MARKET_OPEN, tzinfo=ZoneInfo(MARKET_TZ))
+    session_close = datetime.combine(last_bar.date(), MARKET_CLOSE, tzinfo=ZoneInfo(MARKET_TZ))
+    expected_end = min(last_bar, session_close)
+    expected_idx = pd.date_range(
+        start=session_open,
+        end=expected_end,
+        freq=f"{INTRADAY_BAR_MINUTES}min",
+        tz=ZoneInfo(MARKET_TZ),
+    )
+    expected_bars = max(len(expected_idx), 1)
+    missing_ratio = float(max(expected_bars - len(session_df), 0) / expected_bars)
+
+    warnings = []
+    fresh = stale_minutes <= 20
+    if not fresh:
+        warnings.append(f"Stale intraday feed ({stale_minutes:.0f} min old).")
+    if missing_ratio > 0.15:
+        warnings.append(f"Missing intraday bars detected ({missing_ratio:.0%} of expected bars).")
+
+    return {
+        "usable": fresh and missing_ratio <= 0.25,
+        "fresh": fresh,
+        "stale_minutes": round(stale_minutes, 1),
+        "missing_ratio": round(missing_ratio, 3),
+        "warnings": warnings,
+        "last_bar": last_bar,
+        "bars_in_session": int(len(session_df)),
+    }
+
+
+def compute_beta_to_market(ticker_df, market_df, lookback=63):
+    if ticker_df is None or ticker_df.empty or market_df is None or market_df.empty:
+        return np.nan
+    t_ret = ticker_df["Close"].pct_change().tail(lookback).dropna()
+    m_ret = market_df["Close"].pct_change().tail(lookback).dropna()
+    if t_ret.empty or m_ret.empty:
+        return np.nan
+    merged = pd.concat([t_ret, m_ret], axis=1, join="inner").dropna()
+    if len(merged) < 20:
+        return np.nan
+    cov = np.cov(merged.iloc[:, 0], merged.iloc[:, 1])[0, 1]
+    var = np.var(merged.iloc[:, 1])
+    return float(cov / var) if var > 0 else np.nan
+
+
+def walk_forward_metrics(returns):
+    if returns is None or len(returns) == 0:
+        return {
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "sharpe": 0.0,
+            "sortino": 0.0,
+            "profit_factor": 0.0,
+        }
+
+    r = pd.Series(returns).dropna()
+    if r.empty:
+        return {
+            "trades": 0,
+            "win_rate": 0.0,
+            "expectancy_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+            "sharpe": 0.0,
+            "sortino": 0.0,
+            "profit_factor": 0.0,
+        }
+
+    eq = (1 + r).cumprod()
+    peak = eq.cummax()
+    dd = (eq / peak - 1).min()
+    downside = r[r < 0].std() if (r < 0).any() else 0.0
+    sharpe = (r.mean() / r.std() * np.sqrt(252)) if r.std() and r.std() > 0 else 0.0
+    sortino = (r.mean() / downside * np.sqrt(252)) if downside and downside > 0 else 0.0
+    gross_profit = r[r > 0].sum()
+    gross_loss = abs(r[r < 0].sum())
+    pf = float(gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
+
+    return {
+        "trades": int(len(r)),
+        "win_rate": float((r > 0).mean() * 100),
+        "expectancy_pct": float(r.mean() * 100),
+        "max_drawdown_pct": float(abs(dd) * 100),
+        "sharpe": float(sharpe),
+        "sortino": float(sortino),
+        "profit_factor": float(pf if np.isfinite(pf) else 999.0),
+    }
+
+
+def run_walk_forward_validation(df):
+    if df is None or df.empty or len(df) < 180:
+        return {"status": "insufficient"}
+
+    close = df["Close"].copy()
+    ret_fwd = close.pct_change().shift(-1)
+    sma20 = close.rolling(20).mean()
+    sma50 = close.rolling(50).mean()
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / (loss + 1e-9)
+    rsi = 100 - (100 / (1 + rs))
+
+    tr = np.maximum(
+        (df["High"] - df["Low"]),
+        np.maximum(abs(df["High"] - close.shift(1)), abs(df["Low"] - close.shift(1))),
+    )
+    atr5 = tr.rolling(5).mean()
+    atr20 = tr.rolling(20).mean()
+    atr_pct = (atr5 / close * 100).fillna(0)
+    vol_ratio = (atr5 / (atr20 + 1e-9)).fillna(1.0)
+
+    feat = pd.DataFrame(
+        {
+            "trend": (close / (sma20 + 1e-9) - 1).fillna(0),
+            "mom": ((rsi - 50) / 50).fillna(0),
+            "vol": (1.2 - vol_ratio).fillna(0),
+            "ret_fwd": ret_fwd,
+            "atr_pct": atr_pct,
+        }
+    ).dropna()
+    if len(feat) < 140:
+        return {"status": "insufficient"}
+
+    train_size = 126
+    test_size = 21
+    grid = [
+        (0.5, 0.3, 0.2),
+        (0.4, 0.4, 0.2),
+        (0.3, 0.5, 0.2),
+        (0.45, 0.35, 0.20),
+        (0.35, 0.45, 0.20),
+    ]
+
+    oos_returns = []
+    oos_regimes = []
+    oos_ablation = {"no_trend": [], "no_mom": [], "no_vol": []}
+
+    for start in range(0, len(feat) - train_size - test_size + 1, test_size):
+        train = feat.iloc[start:start + train_size]
+        test = feat.iloc[start + train_size:start + train_size + test_size]
+
+        best_w = grid[0]
+        best_exp = -1e9
+        for w in grid:
+            s = train["trend"] * w[0] + train["mom"] * w[1] + train["vol"] * w[2]
+            trn_rets = train.loc[s > 0.15, "ret_fwd"]
+            exp = trn_rets.mean() if len(trn_rets) else -1e9
+            if exp > best_exp:
+                best_exp = exp
+                best_w = w
+
+        score = test["trend"] * best_w[0] + test["mom"] * best_w[1] + test["vol"] * best_w[2]
+        take = score > 0.15
+        oos_returns.extend(list(test.loc[take, "ret_fwd"].dropna()))
+
+        q1, q2, q3 = train["atr_pct"].quantile([0.25, 0.5, 0.75]).tolist()
+        for i in test.index[take]:
+            a = test.loc[i, "atr_pct"]
+            if a <= q1:
+                oos_regimes.append(("calm", test.loc[i, "ret_fwd"]))
+            elif a <= q2:
+                oos_regimes.append(("elevated", test.loc[i, "ret_fwd"]))
+            elif a <= q3:
+                oos_regimes.append(("stress", test.loc[i, "ret_fwd"]))
+            else:
+                oos_regimes.append(("shock", test.loc[i, "ret_fwd"]))
+
+        no_trend = test["mom"] * best_w[1] + test["vol"] * best_w[2]
+        no_mom = test["trend"] * best_w[0] + test["vol"] * best_w[2]
+        no_vol = test["trend"] * best_w[0] + test["mom"] * best_w[1]
+        oos_ablation["no_trend"].extend(list(test.loc[no_trend > 0.15, "ret_fwd"].dropna()))
+        oos_ablation["no_mom"].extend(list(test.loc[no_mom > 0.15, "ret_fwd"].dropna()))
+        oos_ablation["no_vol"].extend(list(test.loc[no_vol > 0.15, "ret_fwd"].dropna()))
+
+    overall = walk_forward_metrics(oos_returns)
+    regime_rows = []
+    if oos_regimes:
+        reg_df = pd.DataFrame(oos_regimes, columns=["Regime", "ret"])
+        for rg, grp in reg_df.groupby("Regime"):
+            m = walk_forward_metrics(grp["ret"].tolist())
+            regime_rows.append(
+                {
+                    "Regime": rg,
+                    "Trades": m["trades"],
+                    "Win Rate (%)": round(m["win_rate"], 1),
+                    "Expectancy (%)": round(m["expectancy_pct"], 3),
+                }
+            )
+
+    base_exp = overall["expectancy_pct"]
+    ablation_rows = []
+    for k, vals in oos_ablation.items():
+        m = walk_forward_metrics(vals)
+        ablation_rows.append(
+            {
+                "Ablation": k.replace("_", " ").title(),
+                "Expectancy (%)": round(m["expectancy_pct"], 3),
+                "Delta vs Base (pp)": round(m["expectancy_pct"] - base_exp, 3),
+            }
+        )
+
+    return {
+        "status": "ok",
+        "overall": overall,
+        "regime_df": pd.DataFrame(regime_rows),
+        "ablation_df": pd.DataFrame(ablation_rows),
+    }
 
 
 def compute_market_shock_index(index_df, vix_df=None, breadth_pct=None):
@@ -828,110 +1152,382 @@ def build_regime_aware_narrative(
 # 7A. INTRADAY DAY-TRADING ENGINE (NEW)
 # =========================================================
 
-def compute_intraday_trade_plan(intraday_df, daily_df):
+def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
+    params = get_regime_params(market_shock)
+    empty = {
+        "prev_close": None,
+        "last_price": None,
+        "buy_trigger": False,
+        "sell_trigger": False,
+        "distance_from_prev_close_pct": 0.0,
+        "momentum_score": 50.0,
+        "exit_warning": True,
+        "trigger_threshold_pct": params["base_trigger"],
+        "momentum_alignment": False,
+        "trend_filter_pass": False,
+        "regime": params["regime"],
+        "confidence_score": 0.0,
+        "expected_move_pct": 0.0,
+        "stop_loss_pct": 0.0,
+        "target_pct": 0.0,
+        "trailing_stop_pct": 0.0,
+        "max_hold_bars": 0,
+        "total_cost_bps": 0.0,
+        "net_edge_bps": -999.0,
+        "do_not_trade": True,
+        "do_not_trade_reason": "Missing intraday or daily data",
+    }
     if intraday_df is None or intraday_df.empty or daily_df is None or daily_df.empty:
-        return {
-            "prev_close": None,
-            "last_price": None,
-            "buy_trigger": False,
-            "sell_trigger": False,
-            "distance_from_prev_close_pct": 0.0,
-            "momentum_score": 50.0,
-            "exit_warning": False,
-        }
+        return empty
 
-    prev_close = float(daily_df["Close"].iloc[-1])
+    intraday_df = normalize_intraday_bars(intraday_df)
+    if intraday_df.empty:
+        return empty
+
+    prev_close = compute_previous_session_close(intraday_df, daily_df)
     last_price = float(intraday_df["Close"].iloc[-1])
+    if prev_close is None or prev_close <= 0:
+        prev_close = last_price
+
     distance_pct = (last_price - prev_close) / prev_close * 100
-
-    buy_trigger = distance_pct >= 1.0
-    sell_trigger = last_price <= prev_close
-
     close = intraday_df["Close"]
+    high = intraday_df["High"]
+    low = intraday_df["Low"]
     volume = intraday_df["Volume"]
 
+    ret_5m = ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100) if len(close) >= 2 else 0.0
     ret_15m = ((close.iloc[-1] - close.iloc[-4]) / close.iloc[-4] * 100) if len(close) >= 4 else 0.0
     ret_30m = ((close.iloc[-1] - close.iloc[-7]) / close.iloc[-7] * 100) if len(close) >= 7 else 0.0
+    momentum_alignment = bool(ret_5m > 0 and ret_15m > 0 and ret_30m > 0)
 
-    vol_now = volume.iloc[-1]
-    vol_avg = volume.tail(30).mean()
+    vol_now = float(volume.iloc[-1]) if len(volume) else 0.0
+    vol_avg = float(volume.tail(30).mean()) if len(volume) else 0.0
     vol_accel = vol_now / vol_avg if vol_avg > 0 else 1.0
 
-    raw_mom = (ret_15m * 0.4) + (ret_30m * 0.4) + ((vol_accel - 1.0) * 100 * 0.2)
-    momentum_score = float(np.clip(raw_mom, -50, 100))
+    tr = np.maximum(
+        (high - low),
+        np.maximum(abs(high - close.shift(1)), abs(low - close.shift(1))),
+    )
+    atr5 = float(tr.rolling(5).mean().iloc[-1]) if len(tr) >= 5 else float(tr.mean())
+    atr_pct = (atr5 / last_price * 100) if last_price > 0 else 0.0
+    realized_vol = float(close.pct_change().tail(12).std() * 100 * np.sqrt(12)) if len(close) >= 12 else 0.0
 
-    exit_warning = (
-        (distance_pct < 0.5 and not sell_trigger) or
-        (momentum_score < 20)
+    vwap = float((close * volume).cumsum().iloc[-1] / (volume.cumsum().iloc[-1] + 1e-9))
+    daily_sma20 = float(daily_df["Close"].rolling(20).mean().iloc[-1]) if len(daily_df) >= 20 else float(daily_df["Close"].iloc[-1])
+    trend_filter_pass = bool(last_price > vwap and daily_df["Close"].iloc[-1] > daily_sma20)
+
+    trigger_threshold = max(
+        params["base_trigger"],
+        atr_pct * params["atr_mult"],
+        realized_vol * params["rv_mult"],
     )
 
+    vol_spike = atr_pct > (2.5 if params["regime"] in {"stress", "shock"} else 3.5)
+    low_volume = vol_accel < (0.75 if params["regime"] in {"calm", "elevated"} else 0.9)
+
+    raw_mom = (ret_5m * 0.25) + (ret_15m * 0.35) + (ret_30m * 0.25) + ((vol_accel - 1.0) * 100 * 0.15)
+    if vol_spike:
+        raw_mom -= 20
+    if low_volume:
+        raw_mom -= 12
+    momentum_score = float(np.clip(raw_mom + 50, 0, 100))
+
+    confidence = float(
+        np.clip(
+            (abs(distance_pct) / (trigger_threshold + 1e-9)) * 35
+            + (15 if momentum_alignment else 0)
+            + (15 if trend_filter_pass else 0)
+            + np.interp(vol_accel, [0.5, 1.0, 2.0], [5, 12, 18])
+            - (12 if vol_spike else 0)
+            - (10 if low_volume else 0),
+            0,
+            100,
+        )
+    )
+
+    buy_trigger = bool(
+        distance_pct >= trigger_threshold
+        and momentum_alignment
+        and trend_filter_pass
+        and confidence >= params["min_conf"]
+        and not vol_spike
+        and not low_volume
+    )
+    sell_trigger = bool(
+        distance_pct <= -0.6 * trigger_threshold
+        or (last_price < vwap and ret_5m < 0)
+        or confidence < (params["min_conf"] - 10)
+    )
+
+    slippage_bps = 8.0 if params["regime"] in {"stress", "shock"} else 5.0
+    spread_bps = 6.0 if vol_spike else 3.0
+    commission_bps = 1.0
+    total_cost_bps = slippage_bps + spread_bps + commission_bps
+    expected_move_pct = max(trigger_threshold, atr_pct * 1.2)
+    net_edge_bps = expected_move_pct * 100 - total_cost_bps
+    stop_loss_pct = max(trigger_threshold * 0.8, atr_pct * 0.9, 0.5)
+    target_pct = max(trigger_threshold * 1.5, atr_pct * 1.3, 0.8)
+    trailing_stop_pct = max(stop_loss_pct * 0.7, 0.4)
+    max_hold_bars = 18 if params["regime"] in {"stress", "shock"} else 30
+
+    reasons = []
+    if confidence < params["min_conf"]:
+        reasons.append("Low confidence")
+    if low_volume:
+        reasons.append("Low intraday liquidity")
+    if vol_spike:
+        reasons.append("Volatility spike")
+    if net_edge_bps <= 0:
+        reasons.append("Costs exceed expected edge")
+
+    do_not_trade = len(reasons) > 0
+    exit_warning = sell_trigger or do_not_trade
+
     return {
-        "prev_close": round(prev_close, 2),
+        "prev_close": round(float(prev_close), 2),
         "last_price": round(last_price, 2),
         "buy_trigger": buy_trigger,
         "sell_trigger": sell_trigger,
         "distance_from_prev_close_pct": round(distance_pct, 2),
         "momentum_score": round(momentum_score, 1),
         "exit_warning": exit_warning,
+        "trigger_threshold_pct": round(trigger_threshold, 2),
+        "momentum_alignment": momentum_alignment,
+        "trend_filter_pass": trend_filter_pass,
+        "regime": params["regime"],
+        "confidence_score": round(confidence, 1),
+        "expected_move_pct": round(expected_move_pct, 2),
+        "stop_loss_pct": round(stop_loss_pct, 2),
+        "target_pct": round(target_pct, 2),
+        "trailing_stop_pct": round(trailing_stop_pct, 2),
+        "max_hold_bars": int(max_hold_bars),
+        "slippage_bps": round(slippage_bps, 1),
+        "spread_bps": round(spread_bps, 1),
+        "commission_bps": round(commission_bps, 1),
+        "total_cost_bps": round(total_cost_bps, 1),
+        "net_edge_bps": round(net_edge_bps, 1),
+        "do_not_trade": do_not_trade,
+        "do_not_trade_reason": ", ".join(reasons) if reasons else "",
     }
 
-def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
-    rows = []
+
+def build_ai_stock_selection_table(
+    df_history,
+    universe,
+    fundamental_cache,
+    market_shock=50,
+    min_price=5.0,
+    min_dollar_volume=2_000_000,
+):
     if df_history.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+
+    rows = []
+    diagnostics = []
+    audit_rows = []
+    universe_clean, invalid_tickers, duplicate_tickers = sanitize_universe(universe)
 
     available = df_history.columns.get_level_values(0).unique()
-    intraday_snap = fetch_intraday_5m(list(available))
+    intraday_snap = fetch_intraday_5m(list(set(universe_clean) & set(available)))
+    qqq_daily = df_history["QQQ"].dropna() if "QQQ" in available else pd.DataFrame()
 
-    for ticker in universe:
+    for t in invalid_tickers:
+        diagnostics.append({"Ticker": t, "Status": "Rejected", "Reason": "Invalid ticker format"})
+    for t in duplicate_tickers:
+        diagnostics.append({"Ticker": t, "Status": "Ignored", "Reason": "Duplicate ticker"})
+
+    for ticker in universe_clean:
         if ticker not in available:
+            diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": "Ticker missing from historical dataset"})
             continue
 
         try:
             df = df_history[ticker].dropna()
-            if len(df) < 80:
+            if len(df) < 120:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": "Insufficient daily history"})
+                continue
+
+            price = float(df["Close"].iloc[-1])
+            if price < min_price:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": f"Price below minimum (${min_price:.2f})"})
+                continue
+
+            avg_dollar_volume = float((df["Close"] * df["Volume"]).tail(20).mean())
+            if avg_dollar_volume < min_dollar_volume:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": "Insufficient liquidity (20D dollar volume)"})
                 continue
 
             intraday_df = intraday_snap.get(ticker, pd.DataFrame())
-            if intraday_df.empty:
-                intraday_df = df.tail(5)
+            dq = assess_intraday_data_quality(intraday_df)
+            if not dq["usable"]:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": "; ".join(dq["warnings"]) or "Intraday quality check failed"})
+                continue
 
-            daily_tail = df.tail(30)
+            intraday_df = normalize_intraday_bars(intraday_df)
+            daily_tail = df.tail(60)
             shock = compute_ticker_shock(intraday_df, daily_tail)
-
             st_mom = compute_short_term_momentum(df)
-            st_levels = compute_short_term_levels(df)
-
             sig = unified_signal(df)
             structure = classify_structure(sig)
-
             sentiment = calculate_advanced_sentiment(df_history, ticker)
             sent_score = sentiment.get("score", 50)
+            fundamentals = fundamental_cache.get(
+                ticker,
+                {"Market Cap": "N/A", "P/E Ratio": "N/A", "Profit Margin": "N/A"},
+            )
 
-            intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail)
+            intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail, market_shock=market_shock)
+            beta = compute_beta_to_market(df, qqq_daily)
+            if np.isfinite(beta) and abs(beta) > 2.2:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": f"Excessive beta exposure ({beta:.2f})"})
+                continue
+
+            if intraday_plan["do_not_trade"]:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": intraday_plan["do_not_trade_reason"] or "Do-not-trade rule"})
+                audit_rows.append(
+                    {
+                        "Ticker": ticker,
+                        "Decision": "Rejected",
+                        "Confidence": intraday_plan["confidence_score"],
+                        "Reason": intraday_plan["do_not_trade_reason"] or "Do-not-trade rule",
+                        "Shock Score": shock["shock_score"],
+                    }
+                )
+                continue
+
+            features = {
+                "f_intraday": intraday_plan["momentum_score"],
+                "f_sent": sent_score,
+                "f_shock": 100 - shock["shock_score"],
+                "f_mom1d": np.interp(st_mom["1D"], [-6, 0, 6], [20, 55, 90]),
+                "f_mom3d": np.interp(st_mom["3D"], [-10, 0, 10], [20, 55, 90]),
+                "f_trend": 85 if structure in {"Short-Term Breakout 🚀", "Healthy Uptrend 📈"} else 45,
+            }
 
             rows.append(
                 {
                     "Ticker": ticker,
-                    "Price": round(df["Close"].iloc[-1], 2),
-                    "Intraday Return (%)": shock["intraday_return_pct"],
-                    "Daily Vol (%)": shock["daily_vol_pct"],
+                    "Price": round(price, 2),
                     "Shock Score": shock["shock_score"],
+                    "Intraday Return (%)": shock["intraday_return_pct"],
                     "Short-Term Structure": structure,
                     "Sentiment Score": sent_score,
                     "Prev Close": intraday_plan["prev_close"],
                     "Last Price (5m)": intraday_plan["last_price"],
                     "Δ vs Prev Close (%)": intraday_plan["distance_from_prev_close_pct"],
-                    "Buy Trigger (≥ +1%)": intraday_plan["buy_trigger"],
-                    "Sell Trigger (≤ prev close)": intraday_plan["sell_trigger"],
+                    "Vol-Adj Trigger (%)": intraday_plan["trigger_threshold_pct"],
+                    "Buy Trigger": intraday_plan["buy_trigger"],
+                    "Sell Trigger": intraday_plan["sell_trigger"],
+                    "Momentum Alignment": intraday_plan["momentum_alignment"],
+                    "Trend Filter Pass": intraday_plan["trend_filter_pass"],
                     "Intraday Momentum Score": intraday_plan["momentum_score"],
-                    "Exit Warning": intraday_plan["exit_warning"],
+                    "Confidence Score": intraday_plan["confidence_score"],
+                    "Expected Move (%)": intraday_plan["expected_move_pct"],
+                    "Stop Loss (%)": intraday_plan["stop_loss_pct"],
+                    "Target (%)": intraday_plan["target_pct"],
+                    "Trailing Stop (%)": intraday_plan["trailing_stop_pct"],
+                    "Max Hold (5m bars)": intraday_plan["max_hold_bars"],
+                    "Total Costs (bps)": intraday_plan["total_cost_bps"],
+                    "Net Edge (bps)": intraday_plan["net_edge_bps"],
+                    "Regime": intraday_plan["regime"],
+                    "Avg 20D $Vol": round(avg_dollar_volume, 0),
+                    "Data Stale (min)": dq["stale_minutes"],
+                    "Missing Bars (%)": round(dq["missing_ratio"] * 100, 1),
+                    "Market Beta (63D)": round(beta, 2) if np.isfinite(beta) else np.nan,
+                    "Market Cap": fundamentals["Market Cap"],
+                    "P/E Ratio": fundamentals["P/E Ratio"],
+                    "Profit Margin": fundamentals["Profit Margin"],
+                    "_f_intraday": features["f_intraday"],
+                    "_f_sent": features["f_sent"],
+                    "_f_shock": features["f_shock"],
+                    "_f_mom1d": features["f_mom1d"],
+                    "_f_mom3d": features["f_mom3d"],
+                    "_f_trend": features["f_trend"],
                 }
             )
-        except Exception:
-            continue
 
-    return pd.DataFrame(rows)
+            audit_rows.append(
+                {
+                    "Ticker": ticker,
+                    "Decision": "Accepted",
+                    "Confidence": intraday_plan["confidence_score"],
+                    "Shock Score": shock["shock_score"],
+                    "Net Edge (bps)": intraday_plan["net_edge_bps"],
+                    "Reason": "Passed all filters",
+                }
+            )
+        except Exception as e:
+            diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": f"Computation error: {e}"})
+            audit_rows.append({"Ticker": ticker, "Decision": "Rejected", "Reason": f"Error: {e}"})
+
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame(diagnostics), pd.DataFrame(audit_rows), {
+            "invalid_tickers": invalid_tickers,
+            "duplicate_tickers": duplicate_tickers,
+            "input_count": len(universe or []),
+            "clean_count": len(universe_clean),
+        }
+
+    score_df = pd.DataFrame(rows)
+    score_cols = ["_f_intraday", "_f_sent", "_f_shock", "_f_mom1d", "_f_mom3d", "_f_trend"]
+    for c in score_cols:
+        mu = score_df[c].mean()
+        sd = score_df[c].std()
+        score_df[f"z_{c}"] = 0.0 if sd == 0 or np.isnan(sd) else (score_df[c] - mu) / sd
+
+    # Regime-aware calibrated blend on normalized cross-sectional features.
+    params = get_regime_params(market_shock)
+    if params["regime"] in {"stress", "shock"}:
+        w = {"_f_intraday": 0.25, "_f_sent": 0.10, "_f_shock": 0.25, "_f_mom1d": 0.10, "_f_mom3d": 0.10, "_f_trend": 0.20}
+    else:
+        w = {"_f_intraday": 0.30, "_f_sent": 0.15, "_f_shock": 0.15, "_f_mom1d": 0.15, "_f_mom3d": 0.10, "_f_trend": 0.15}
+
+    score_df["AI Score"] = (
+        score_df["z__f_intraday"] * w["_f_intraday"]
+        + score_df["z__f_sent"] * w["_f_sent"]
+        + score_df["z__f_shock"] * w["_f_shock"]
+        + score_df["z__f_mom1d"] * w["_f_mom1d"]
+        + score_df["z__f_mom3d"] * w["_f_mom3d"]
+        + score_df["z__f_trend"] * w["_f_trend"]
+    )
+    sc_min = float(score_df["AI Score"].min())
+    sc_max = float(score_df["AI Score"].max())
+    if sc_max > sc_min:
+        score_df["AI Score"] = np.interp(score_df["AI Score"], [sc_min, sc_max], [35, 95])
+    else:
+        score_df["AI Score"] = 65.0
+
+    min_conf = params["min_conf"]
+    score_df = score_df[score_df["Confidence Score"] >= min_conf].copy()
+    if score_df.empty:
+        diagnostics.append({"Ticker": "*", "Status": "Rejected", "Reason": "All symbols failed confidence threshold for current regime."})
+        return pd.DataFrame(), pd.DataFrame(diagnostics), pd.DataFrame(audit_rows), {
+            "invalid_tickers": invalid_tickers,
+            "duplicate_tickers": duplicate_tickers,
+            "input_count": len(universe or []),
+            "clean_count": len(universe_clean),
+        }
+
+    account_equity = 100000.0
+    risk_per_trade = 0.01
+    max_positions = 5
+    max_daily_loss_pct = 2.0
+    risk_budget = account_equity * risk_per_trade
+    score_df["Stop Distance (%)"] = np.maximum(score_df["Vol-Adj Trigger (%)"] * 0.8, 0.5)
+    score_df["Position Size ($)"] = (risk_budget / (score_df["Stop Distance (%)"] / 100)).clip(upper=account_equity / max_positions)
+    score_df["Daily Loss Cap (%)"] = max_daily_loss_pct
+    score_df["Max Concurrent Positions"] = max_positions
+
+    drop_cols = [c for c in score_df.columns if c.startswith("_") or c.startswith("z__")]
+    score_df = score_df.drop(columns=drop_cols).sort_values(by="AI Score", ascending=False).reset_index(drop=True)
+
+    return score_df, pd.DataFrame(diagnostics), pd.DataFrame(audit_rows), {
+        "invalid_tickers": invalid_tickers,
+        "duplicate_tickers": duplicate_tickers,
+        "input_count": len(universe or []),
+        "clean_count": len(universe_clean),
+        "confidence_threshold": min_conf,
+    }
 
 
 # =========================================================
@@ -983,9 +1579,14 @@ custom_select = st.sidebar.multiselect(
 )
 
 user_added_tickers = list(set(manual_list + custom_select))
-full_universe = list(set(universe + user_added_tickers))
+full_universe_raw = universe + user_added_tickers
+full_universe, invalid_tickers_ui, duplicate_tickers_ui = sanitize_universe(full_universe_raw)
 
-st.sidebar.success(f"Tracking {len(full_universe)} total tickers")
+st.sidebar.success(f"Tracking {len(full_universe)} valid tickers")
+if invalid_tickers_ui:
+    st.sidebar.warning(f"Invalid tickers ignored: {', '.join(invalid_tickers_ui[:8])}")
+if duplicate_tickers_ui:
+    st.sidebar.info(f"Duplicate tickers ignored: {', '.join(duplicate_tickers_ui[:8])}")
 
 # --- Data loads ---
 with st.spinner("Syncing technical historical structures..."):
@@ -993,6 +1594,28 @@ with st.spinner("Syncing technical historical structures..."):
 
 with st.spinner("Extracting corporate fundamental structures..."):
     fundamental_cache = fetch_fundamental_metrics(full_universe)
+
+with st.spinner("Checking intraday feed quality..."):
+    health_universe = full_universe[: min(12, len(full_universe))]
+    intraday_health_snap = fetch_intraday_5m(health_universe)
+    health_rows = []
+    for t in health_universe:
+        q = assess_intraday_data_quality(intraday_health_snap.get(t, pd.DataFrame()))
+        health_rows.append(
+            {
+                "Ticker": t,
+                "Usable": q["usable"],
+                "Fresh": q["fresh"],
+                "Stale (min)": q["stale_minutes"],
+                "Missing Bars (%)": round(q["missing_ratio"] * 100, 1),
+                "Warnings": " | ".join(q["warnings"]),
+            }
+        )
+    intraday_health_df = pd.DataFrame(health_rows)
+
+if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
+    bad_count = int((~intraday_health_df["Usable"]).sum())
+    st.warning(f"Intraday data quality warning: {bad_count} sampled tickers have stale or missing bars. Review AI diagnostics before trading.")
 
 # --- Tabs ---
 (
@@ -1306,6 +1929,36 @@ with tab_sentiment:
                 with col_bt3:
                     st.metric("Avg Holding (bars)", f"{avg_len:.1f}")
 
+                wf = run_walk_forward_validation(ticker_df)
+                st.markdown("### 🧪 Walk-Forward OOS Validation (Regime-Aware)")
+                if wf.get("status") == "ok":
+                    overall = wf["overall"]
+                    col_wf1, col_wf2, col_wf3, col_wf4, col_wf5, col_wf6 = st.columns(6)
+                    with col_wf1:
+                        st.metric("OOS Trades", overall["trades"])
+                    with col_wf2:
+                        st.metric("OOS Win Rate (%)", f"{overall['win_rate']:.1f}")
+                    with col_wf3:
+                        st.metric("Expectancy (%)", f"{overall['expectancy_pct']:.3f}")
+                    with col_wf4:
+                        st.metric("Max Drawdown (%)", f"{overall['max_drawdown_pct']:.2f}")
+                    with col_wf5:
+                        st.metric("Sharpe / Sortino", f"{overall['sharpe']:.2f} / {overall['sortino']:.2f}")
+                    with col_wf6:
+                        st.metric("Profit Factor", f"{overall['profit_factor']:.2f}")
+
+                    regime_df = wf.get("regime_df", pd.DataFrame())
+                    if not regime_df.empty:
+                        st.markdown("#### OOS Performance by Regime")
+                        st.dataframe(regime_df, use_container_width=True, hide_index=True)
+
+                    ablation_df = wf.get("ablation_df", pd.DataFrame())
+                    if not ablation_df.empty:
+                        st.markdown("#### Feature Ablation (OOS)")
+                        st.dataframe(ablation_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Insufficient history for walk-forward validation.")
+
                 trend_phase = classify_structure(unified_signal(ticker_df))
                 signal_quality, narrative_lines, score_components = compute_signal_quality_and_narrative(
                     close,
@@ -1376,10 +2029,32 @@ with tab_macro:
 with tab_ai:
     st.subheader("🤖 AI Stock Selection Engine — Short-Term Tactical Focus")
     if not historical_data.empty:
-        ai_df = build_ai_stock_selection_table(historical_data, full_universe, fundamental_cache)
+        ai_df, ai_diag_df, ai_audit_df, ai_meta = build_ai_stock_selection_table(
+            historical_data,
+            full_universe,
+            fundamental_cache,
+            market_shock=market_shock,
+        )
+        st.caption(
+            f"Regime confidence threshold: {ai_meta.get('confidence_threshold', 'N/A')} | "
+            f"Input tickers: {ai_meta.get('input_count', 0)} | "
+            f"Valid tickers: {ai_meta.get('clean_count', 0)}"
+        )
         if not ai_df.empty:
             st.dataframe(ai_df, use_container_width=True, hide_index=True)
         else:
             st.info("AI engine did not find any qualified candidates (check data coverage and universe).")
+
+        if not intraday_health_df.empty:
+            with st.expander("Intraday Feed Quality Sample", expanded=False):
+                st.dataframe(intraday_health_df, use_container_width=True, hide_index=True)
+
+        if not ai_diag_df.empty:
+            with st.expander("Rejected / Filtered Symbols Diagnostics", expanded=False):
+                st.dataframe(ai_diag_df, use_container_width=True, hide_index=True)
+
+        if not ai_audit_df.empty:
+            with st.expander("Signal Audit Log", expanded=False):
+                st.dataframe(ai_audit_df, use_container_width=True, hide_index=True)
     else:
         st.error("Historical data unavailable.")
