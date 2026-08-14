@@ -107,6 +107,16 @@ def fetch_intraday_5m(tickers, days=2):
     return fetch_intraday_snapshot(tickers, interval="5m", days=days)
 
 
+def fetch_single_intraday_5m(ticker, days=2):
+    if not ticker or not isinstance(ticker, str):
+        return pd.DataFrame()
+    snap = fetch_intraday_5m([ticker.upper()], days=days)
+    intraday_df = snap.get(ticker.upper(), pd.DataFrame()) if isinstance(snap, dict) else pd.DataFrame()
+    if intraday_df is None or intraday_df.empty:
+        return pd.DataFrame()
+    return normalize_intraday_bars(intraday_df)
+
+
 MARKET_TZ = "America/New_York"
 MARKET_OPEN = dt_time(9, 30)
 MARKET_CLOSE = dt_time(16, 0)
@@ -562,8 +572,12 @@ def walk_forward_metrics(returns):
     }
 
 
+@st.cache_data(ttl=900)
 def run_walk_forward_validation(df):
     if df is None or df.empty or len(df) < 180:
+        return {"status": "insufficient"}
+    required_cols = {"Close", "High", "Low", "Volume"}
+    if not required_cols.issubset(df.columns):
         return {"status": "insufficient"}
 
     close = df["Close"].copy()
@@ -1010,6 +1024,7 @@ def calculate_advanced_sentiment(df_history, ticker):
         return {"status": "Error", "score": 50, "label": "Error", "error": str(e)}
 
 
+@st.cache_data(ttl=900)
 def calculate_macro_trends(df_history, tickers, fundamental_data):
     macro_data = []
     if df_history.empty:
@@ -2033,6 +2048,29 @@ def build_ai_stock_selection_table(
     }
 
 
+@st.cache_data(ttl=180)
+def get_ai_stock_selection_bundle(df_history, universe, fundamental_cache, market_shock):
+    result = build_ai_stock_selection_table(
+        df_history,
+        universe,
+        fundamental_cache,
+        market_shock=market_shock,
+    )
+    if not isinstance(result, tuple) or len(result) != 4:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+
+    ai_df, ai_diag_df, ai_audit_df, ai_meta = result
+    if not isinstance(ai_df, pd.DataFrame):
+        ai_df = pd.DataFrame()
+    if not isinstance(ai_diag_df, pd.DataFrame):
+        ai_diag_df = pd.DataFrame()
+    if not isinstance(ai_audit_df, pd.DataFrame):
+        ai_audit_df = pd.DataFrame()
+    if not isinstance(ai_meta, dict):
+        ai_meta = {}
+    return ai_df, ai_diag_df, ai_audit_df, ai_meta
+
+
 def build_high_movement_watchlist(
     df_history,
     universe,
@@ -2374,9 +2412,7 @@ def analyze_trade_trap(ticker, df_history, fundamental_cache, market_shock=50):
 
         # --- Intraday / trade plan ---
         qqq_daily = df_history["QQQ"].dropna() if "QQQ" in available else pd.DataFrame()
-        intraday_snap = fetch_intraday_5m([t])
-        intraday_df = intraday_snap.get(t, pd.DataFrame())
-        intraday_df = normalize_intraday_bars(intraday_df)
+        intraday_df = fetch_single_intraday_5m(t)
         daily_tail = df.tail(60)
 
         shock = compute_ticker_shock(intraday_df, daily_tail)
@@ -2540,7 +2576,7 @@ universe = get_base_universe()
 
 # --- Market regime banner ---
 with st.spinner("Syncing intraday market stress regime..."):
-    intraday_index = fetch_intraday_snapshot(["QQQ"]).get("QQQ", pd.DataFrame())
+    intraday_index = fetch_single_intraday_5m("QQQ", days=3)
     market_shock = compute_market_shock_index(intraday_index)
 
 if market_shock >= 80:
@@ -2617,6 +2653,18 @@ with st.spinner("Checking intraday feed quality..."):
 if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
     bad_count = int((~intraday_health_df["Usable"]).sum())
     st.warning(f"Intraday data quality warning: {bad_count} sampled tickers have stale or missing bars. Review AI diagnostics before trading.")
+
+if not historical_data.empty:
+    ai_df_shared, ai_diag_df_shared, ai_audit_df_shared, ai_meta_shared = get_ai_stock_selection_bundle(
+        historical_data,
+        full_universe,
+        fundamental_cache,
+        market_shock,
+    )
+    macro_df_shared = calculate_macro_trends(historical_data, full_universe, fundamental_cache)
+else:
+    ai_df_shared, ai_diag_df_shared, ai_audit_df_shared, ai_meta_shared = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), {}
+    macro_df_shared = pd.DataFrame()
 
 # --- Tabs ---
 (
@@ -3021,8 +3069,7 @@ with tab_sentiment:
                 )
 
                 # Ticker shock for regime-aware narrative
-                intraday_snap_single = fetch_intraday_snapshot([selected_ticker])
-                intraday_df_single = intraday_snap_single.get(selected_ticker, pd.DataFrame())
+                intraday_df_single = fetch_single_intraday_5m(selected_ticker, days=3)
                 ticker_shock_obj = compute_ticker_shock(intraday_df_single, ticker_df.tail(30))
                 ticker_shock_score = ticker_shock_obj["shock_score"]
 
@@ -3063,7 +3110,7 @@ with tab_sentiment:
 with tab_macro:
     st.subheader("🏛️ Macro Wealth & Long-Term Investment")
     if not historical_data.empty:
-        macro_df = calculate_macro_trends(historical_data, full_universe, fundamental_cache)
+        macro_df = macro_df_shared
         if not macro_df.empty:
             st.dataframe(macro_df, use_container_width=True, hide_index=True)
         else:
@@ -3078,11 +3125,11 @@ with tab_macro:
 with tab_ai:
     st.subheader("🤖 AI Stock Selection Engine — Short-Term Tactical Focus")
     if not historical_data.empty:
-        ai_df, ai_diag_df, ai_audit_df, ai_meta = build_ai_stock_selection_table(
-            historical_data,
-            full_universe,
-            fundamental_cache,
-            market_shock=market_shock,
+        ai_df, ai_diag_df, ai_audit_df, ai_meta = (
+            ai_df_shared,
+            ai_diag_df_shared,
+            ai_audit_df_shared,
+            ai_meta_shared,
         )
         st.caption(
             f"Regime confidence threshold: {ai_meta.get('confidence_threshold', 'N/A')} | "
@@ -3120,12 +3167,7 @@ with tab_top5:
     st.subheader("🏆 Top 5 Trading Day Candidates")
     st.caption("Ranked by AI Score from the AI Stock Selection Engine. Only qualified, regime-aware candidates are shown.")
     if not historical_data.empty:
-        top5_ai_df, _top5_diag, _top5_audit, top5_meta = build_ai_stock_selection_table(
-            historical_data,
-            full_universe,
-            fundamental_cache,
-            market_shock=market_shock,
-        )
+        top5_ai_df, top5_meta = ai_df_shared, ai_meta_shared
         if top5_meta.get("strategy_kill_switch"):
             st.error(f"Strategy kill-switch active: {top5_meta.get('kill_switch_reason', 'Risk control')} — no candidates today.")
         elif top5_ai_df.empty:
@@ -3145,7 +3187,11 @@ with tab_top5:
                 "Volume Confirmation",
             ]
             _top5_cols_available = [c for c in _top5_cols_preferred if c in top5_ai_df.columns]
-            top5_display = top5_ai_df.head(5)[_top5_cols_available].reset_index(drop=True)
+            if not _top5_cols_available:
+                st.info("Top 5 columns unavailable in current AI output format. Showing first 5 rows instead.")
+                top5_display = top5_ai_df.head(5).reset_index(drop=True)
+            else:
+                top5_display = top5_ai_df.head(5)[_top5_cols_available].reset_index(drop=True)
             top5_display.index = top5_display.index + 1
             st.dataframe(top5_display, use_container_width=True)
             st.caption(
@@ -3177,12 +3223,7 @@ with tab_high_movement:
 
         with comparison_col:
             st.markdown("#### Top 5 (Core Picks)")
-            comparison_top5_df, _comparison_diag, _comparison_audit, comparison_top5_meta = build_ai_stock_selection_table(
-                historical_data,
-                full_universe,
-                fundamental_cache,
-                market_shock=market_shock,
-            )
+            comparison_top5_df, comparison_top5_meta = ai_df_shared, ai_meta_shared
             if comparison_top5_meta.get("strategy_kill_switch"):
                 st.error(f"Strategy kill-switch active: {comparison_top5_meta.get('kill_switch_reason', 'Risk control')}")
             elif comparison_top5_df.empty:
@@ -3197,11 +3238,19 @@ with tab_high_movement:
                     "Regime",
                 ]
                 available_comparison_cols = [c for c in comparison_cols if c in comparison_top5_df.columns]
-                st.dataframe(
-                    comparison_top5_df.head(5)[available_comparison_cols].reset_index(drop=True),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                if not available_comparison_cols:
+                    st.info("Core Top 5 columns unavailable in current AI output format. Showing first 5 rows instead.")
+                    st.dataframe(
+                        comparison_top5_df.head(5).reset_index(drop=True),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.dataframe(
+                        comparison_top5_df.head(5)[available_comparison_cols].reset_index(drop=True),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
         with watchlist_col:
             regime = high_movement_payload.get("regime", {})
