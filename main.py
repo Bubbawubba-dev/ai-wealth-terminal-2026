@@ -2071,6 +2071,16 @@ def get_ai_stock_selection_bundle(df_history, universe, fundamental_cache, marke
     return ai_df, ai_diag_df, ai_audit_df, ai_meta
 
 
+def format_hkt_timestamp(iso_ts: str) -> str:
+    """Convert an ISO UTC timestamp string to a Hong Kong time display string."""
+    try:
+        dt = datetime.fromisoformat(iso_ts)
+        hkt = dt.astimezone(ZoneInfo("Asia/Hong_Kong"))
+        return hkt.strftime("%Y-%m-%d %H:%M HKT")
+    except Exception:
+        return "N/A"
+
+
 def build_high_movement_watchlist(
     df_history,
     universe,
@@ -3255,7 +3265,7 @@ with tab_high_movement:
         with watchlist_col:
             regime = high_movement_payload.get("regime", {})
             st.caption(
-                f"Generated at: {high_movement_payload.get('generated_at', 'N/A')} | "
+                f"Generated at: {format_hkt_timestamp(high_movement_payload.get('generated_at', ''))} | "
                 f"Regime: {regime.get('state', 'N/A')} | {regime.get('summary', '')}"
             )
             for idx, candidate in enumerate(high_movement_payload.get("high_movement_top5", []), start=1):
