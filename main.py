@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import re
 from datetime import datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
+from high_movement import build_candidate_display_context, build_high_movement_payload
 
 # =========================================================
 # 1. CONFIGURATION & STYLING
@@ -2032,6 +2033,224 @@ def build_ai_stock_selection_table(
     }
 
 
+def build_high_movement_watchlist(
+    df_history,
+    universe,
+    fundamental_cache,
+    market_shock=50,
+    min_price=5.0,
+    min_dollar_volume=2_000_000,
+):
+    empty_payload = build_high_movement_payload(
+        [],
+        market_shock,
+        source_inputs=["historical_data", "intraday_5m", "fundamental_cache"],
+    )
+    if df_history is None or df_history.empty:
+        empty_payload["warnings"].append("NO_HISTORICAL_DATA")
+        return empty_payload
+
+    candidates = []
+    source_rejections = {}
+    universe_clean, invalid_tickers, duplicate_tickers = sanitize_universe(universe)
+    available = df_history.columns.get_level_values(0).unique()
+    intraday_snap = fetch_intraday_5m(list(set(universe_clean) & set(available)))
+    qqq_daily = df_history["QQQ"].dropna() if "QQQ" in available else pd.DataFrame()
+
+    for _ticker in invalid_tickers:
+        source_rejections["INVALID_TICKER"] = source_rejections.get("INVALID_TICKER", 0) + 1
+    for _ticker in duplicate_tickers:
+        source_rejections["DUPLICATE_TICKER"] = source_rejections.get("DUPLICATE_TICKER", 0) + 1
+
+    for ticker in universe_clean:
+        if ticker not in available:
+            source_rejections["MISSING_HISTORY"] = source_rejections.get("MISSING_HISTORY", 0) + 1
+            continue
+
+        try:
+            df = df_history[ticker].dropna()
+            if len(df) < 120:
+                source_rejections["INSUFFICIENT_HISTORY"] = source_rejections.get("INSUFFICIENT_HISTORY", 0) + 1
+                continue
+
+            price = float(df["Close"].iloc[-1])
+            if price < min_price:
+                source_rejections["PRICE_BELOW_MIN"] = source_rejections.get("PRICE_BELOW_MIN", 0) + 1
+                continue
+
+            avg_dollar_volume = float((df["Close"] * df["Volume"]).tail(20).mean())
+            intraday_df = intraday_snap.get(ticker, pd.DataFrame())
+            dq = assess_intraday_data_quality(intraday_df)
+            if not dq["usable"]:
+                source_rejections["INTRADAY_QUALITY_FAILED"] = source_rejections.get("INTRADAY_QUALITY_FAILED", 0) + 1
+                continue
+
+            intraday_df = normalize_intraday_bars(intraday_df)
+            if intraday_df.empty:
+                source_rejections["EMPTY_INTRADAY"] = source_rejections.get("EMPTY_INTRADAY", 0) + 1
+                continue
+
+            daily_tail = df.tail(90)
+            intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail, market_shock=market_shock)
+            levels = compute_short_term_levels(df)
+            shock = compute_ticker_shock(intraday_df, daily_tail)
+            st_mom = compute_short_term_momentum(df)
+            signal = unified_signal(df)
+            structure = classify_structure(signal)
+            beta = compute_beta_to_market(df, qqq_daily)
+            recent_returns = df["Close"].pct_change().dropna().tail(20).tolist()
+
+            direction = "up"
+            if intraday_plan["sell_trigger"] and not intraday_plan["buy_trigger"]:
+                direction = "down"
+            elif intraday_plan["distance_from_prev_close_pct"] < 0 and not intraday_plan["trend_filter_pass"]:
+                direction = "down"
+
+            compression_ready = (
+                intraday_plan["cloud_state"] in {"compression/chop", "transition"}
+                or intraday_plan["cloud_separation_pct"] <= 0.18
+            )
+            trigger_proximity = abs(intraday_plan["distance_from_prev_close_pct"]) >= (intraday_plan["trigger_threshold_pct"] * 0.55)
+            technical_trigger = bool(
+                (compression_ready and trigger_proximity)
+                or intraday_plan["one_candle_confirmation"]
+                or intraday_plan["buy_trigger"]
+                or intraday_plan["sell_trigger"]
+            )
+
+            volatility_expansion = float(
+                np.clip(
+                    np.interp(intraday_plan["cloud_expansion_ratio"], [0.8, 1.0, 1.4], [25, 60, 100]) * 0.55
+                    + np.interp(intraday_plan["atr_context_pct"], [0.4, 1.6, 4.0], [20, 65, 100]) * 0.45,
+                    0,
+                    100,
+                )
+            )
+            volume_anomaly = float(np.clip(np.interp(st_mom["VolAccel"], [0.85, 1.2, 2.2], [15, 60, 100]), 0, 100))
+            catalyst_strength = float(
+                np.clip(
+                    (78 if technical_trigger else 38)
+                    + (10 if intraday_plan["volume_confirmation_pass"] else 0)
+                    + (6 if abs(shock["shock_z"]) >= 1.0 else 0),
+                    0,
+                    100,
+                )
+            )
+            order_flow_liquidity = float(
+                np.clip(
+                    np.interp(avg_dollar_volume, [min_dollar_volume, 15_000_000, 75_000_000], [45, 75, 100]) * 0.65
+                    + np.interp(max(0.0, 14.0 - intraday_plan["spread_bps"]), [0.0, 8.0, 14.0], [10, 65, 100]) * 0.35,
+                    0,
+                    100,
+                )
+            )
+            trend_alignment = float(
+                np.clip(
+                    intraday_plan["cloud_confidence"] * 0.35
+                    + intraday_plan["mtf_cheatcode_score"] * 0.35
+                    + (90 if structure in {"Short-Term Breakout 🚀", "Healthy Uptrend 📈"} else 45) * 0.30,
+                    0,
+                    100,
+                )
+            )
+
+            recent_low = float(df.tail(5)["Low"].min())
+            recent_high = float(df.tail(5)["High"].max())
+            entry_anchor = float(levels["Breakout"] if direction == "up" else recent_low)
+            zone_half_pct = 0.004
+            if direction == "up":
+                ideal_entry = {
+                    "type": "zone",
+                    "min": round(max(price * (1 - zone_half_pct), levels["Pullback_382"]), 2),
+                    "max": round(max(entry_anchor, price), 2),
+                }
+                stop_loss = round(entry_anchor * (1 - max(intraday_plan["stop_loss_pct"], 0.6) / 100), 2)
+                profit_target_1 = round(entry_anchor * (1 + max(intraday_plan["target_pct"] * 0.75, 0.9) / 100), 2)
+                profit_target_2 = round(entry_anchor * (1 + max(intraday_plan["target_pct"] * 1.20, 1.8) / 100), 2)
+            else:
+                upper_zone = min(price * (1 + zone_half_pct), recent_high)
+                ideal_entry = {
+                    "type": "zone",
+                    "min": round(min(entry_anchor, upper_zone), 2),
+                    "max": round(max(entry_anchor, upper_zone), 2),
+                }
+                stop_loss = round(entry_anchor * (1 + max(intraday_plan["stop_loss_pct"], 0.6) / 100), 2)
+                profit_target_1 = round(entry_anchor * (1 - max(intraday_plan["target_pct"] * 0.75, 0.9) / 100), 2)
+                profit_target_2 = round(entry_anchor * (1 - max(intraday_plan["target_pct"] * 1.20, 1.8) / 100), 2)
+
+            catalyst_summary = (
+                "Technical compression and trigger proximity within the next 24h."
+                if technical_trigger
+                else "Reserve candidate: elevated movement factors but catalyst timing is less explicit."
+            )
+            comparison_note = (
+                "Higher 24h move expectancy and shorter holding horizon than Core Top 5."
+                if technical_trigger
+                else "Reserve high-movement candidate kept separate from Core Top 5 because the trigger is less explicit."
+            )
+            holding_time = "2-12h" if market_shock >= 45 else "4-24h"
+
+            candidates.append(
+                {
+                    "asset": ticker,
+                    "volatility_expansion": volatility_expansion,
+                    "volume_anomaly": volume_anomaly,
+                    "catalyst_strength": catalyst_strength,
+                    "order_flow_liquidity": order_flow_liquidity,
+                    "trend_alignment": trend_alignment,
+                    "catalyst_type": "technical",
+                    "catalyst_summary": catalyst_summary,
+                    "expected_direction": direction,
+                    "confidence": intraday_plan["confidence_score"],
+                    "ideal_entry": ideal_entry,
+                    "stop_loss": stop_loss,
+                    "profit_target_1": profit_target_1,
+                    "profit_target_2": profit_target_2,
+                    "holding_time": holding_time,
+                    "rationale": (
+                        f"{structure} | cloud {intraday_plan['cloud_state']} | "
+                        f"vol accel {st_mom['VolAccel']:.2f}x | trigger {intraday_plan['trigger_threshold_pct']:.2f}%."
+                    ),
+                    "status": "waiting",
+                    "comparison_note": comparison_note,
+                    "has_upcoming_catalyst": False,
+                    "has_technical_trigger": technical_trigger,
+                    "liquidity_ok": bool(avg_dollar_volume >= min_dollar_volume and intraday_plan["spread_bps"] <= 12.0),
+                    "spread_bps": intraday_plan["spread_bps"],
+                    "_recent_returns": recent_returns,
+                    "trace": {
+                        "feature_inputs": {
+                            "volatility_expansion": round(volatility_expansion, 1),
+                            "volume_anomaly": round(volume_anomaly, 1),
+                            "catalyst_strength": round(catalyst_strength, 1),
+                            "order_flow_liquidity": round(order_flow_liquidity, 1),
+                            "trend_alignment": round(trend_alignment, 1),
+                        },
+                        "source_inputs": ["historical_data", "intraday_5m", "fundamental_cache"],
+                        "market_shock": market_shock,
+                        "avg_20d_dollar_volume": round(avg_dollar_volume, 0),
+                        "spread_bps": intraday_plan["spread_bps"],
+                        "beta_63d": round(beta, 2) if np.isfinite(beta) else None,
+                    },
+                }
+            )
+        except Exception:
+            source_rejections["COMPUTATION_ERROR"] = source_rejections.get("COMPUTATION_ERROR", 0) + 1
+
+    payload = build_high_movement_payload(
+        candidates,
+        market_shock,
+        source_inputs=["historical_data", "intraday_5m", "fundamental_cache"],
+    )
+    if payload["warnings"] or source_rejections:
+        payload["warnings"] = payload["warnings"] + [
+            f"SOURCE_REJECTION_COUNTS: {source_rejections}"
+        ] if source_rejections else payload["warnings"]
+    if not payload["high_movement_top5"] and not payload["warnings"]:
+        payload["warnings"].append("NO_QUALIFIED_HIGH_MOVEMENT_CANDIDATES")
+    return payload
+
+
 # =========================================================
 # 7b. TRADE TRAP ANALYSIS
 # =========================================================
@@ -2408,6 +2627,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
     tab_macro,
     tab_ai,
     tab_top5,
+    tab_high_movement,
     tab_trap,
 ) = st.tabs(
     [
@@ -2418,6 +2638,7 @@ if not intraday_health_df.empty and (~intraday_health_df["Usable"]).any():
         "🏛️ Macro Wealth & Long-Term Investment",
         "🤖 AI Stock Selection Engine",
         "🏆 Top 5 Today",
+        "Top 5 High-Movement (Next 24h)",
         "🪤 Trade Trap Checker",
     ]
 )
@@ -2936,7 +3157,126 @@ with tab_top5:
         st.error("Historical data unavailable — cannot compute top 5 candidates.")
 
 # =========================================================
-# TAB 8: TRADE TRAP CHECKER
+# TAB 8: TOP 5 HIGH-MOVEMENT (NEXT 24H)
+# =========================================================
+
+with tab_high_movement:
+    st.subheader("Top 5 High-Movement (Next 24h)")
+    st.caption(
+        "Independent watchlist ranked for next-24h movement probability. Hard risk filters stay intact; "
+        "reserve backfill is only used when needed to maintain five names."
+    )
+    if not historical_data.empty:
+        high_movement_payload = build_high_movement_watchlist(
+            historical_data,
+            full_universe,
+            fundamental_cache,
+            market_shock=market_shock,
+        )
+        comparison_col, watchlist_col = st.columns([1, 1.35], gap="large")
+
+        with comparison_col:
+            st.markdown("#### Top 5 (Core Picks)")
+            comparison_top5_df, _comparison_diag, _comparison_audit, comparison_top5_meta = build_ai_stock_selection_table(
+                historical_data,
+                full_universe,
+                fundamental_cache,
+                market_shock=market_shock,
+            )
+            if comparison_top5_meta.get("strategy_kill_switch"):
+                st.error(f"Strategy kill-switch active: {comparison_top5_meta.get('kill_switch_reason', 'Risk control')}")
+            elif comparison_top5_df.empty:
+                st.info("No Core Top 5 candidates available for comparison.")
+            else:
+                comparison_cols = [
+                    "Ticker",
+                    "AI Score",
+                    "Confidence Score",
+                    "Reward/Risk",
+                    "Setup Grade",
+                    "Regime",
+                ]
+                available_comparison_cols = [c for c in comparison_cols if c in comparison_top5_df.columns]
+                st.dataframe(
+                    comparison_top5_df.head(5)[available_comparison_cols].reset_index(drop=True),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        with watchlist_col:
+            regime = high_movement_payload.get("regime", {})
+            st.caption(
+                f"Generated at: {high_movement_payload.get('generated_at', 'N/A')} | "
+                f"Regime: {regime.get('state', 'N/A')} | {regime.get('summary', '')}"
+            )
+            for idx, candidate in enumerate(high_movement_payload.get("high_movement_top5", []), start=1):
+                display_ctx = build_candidate_display_context(candidate)
+                status_meta = display_ctx["status_badge"]
+                direction_label = candidate["expected_direction"].upper()
+                entry = candidate["ideal_entry"]
+                if isinstance(entry, dict):
+                    entry_label = f"{entry.get('min', 'N/A')} - {entry.get('max', 'N/A')}"
+                else:
+                    entry_label = entry
+
+                st.markdown(
+                    f"""
+                    <div style="border:1px solid #334155; border-left:6px solid {display_ctx['direction_color']};
+                    padding:0.9rem 1rem; border-radius:10px; margin-bottom:0.8rem; background:#0f172a;">
+                        <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center;">
+                            <div>
+                                <div style="font-size:1.05rem; font-weight:700;">{idx}. {candidate['asset']}</div>
+                                <div style="color:#94a3b8;">Score {candidate['score']} | Confidence {candidate['confidence']}/100 ({display_ctx['confidence_band']})</div>
+                            </div>
+                            <div style="display:flex; gap:0.5rem; align-items:center;">
+                                <span style="color:{display_ctx['direction_color']}; font-weight:700;">{direction_label}</span>
+                                <span style="background:{status_meta['bg']}; color:{status_meta['fg']}; padding:0.2rem 0.6rem; border-radius:999px; font-size:0.8rem;">{status_meta['label']}</span>
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                metric_cols = st.columns(5)
+                metric_cols[0].metric("Entry Zone", entry_label)
+                metric_cols[1].metric("Stop Loss", candidate["stop_loss"])
+                metric_cols[2].metric("Profit Target 1", candidate["profit_target_1"])
+                metric_cols[3].metric("Profit Target 2", candidate["profit_target_2"])
+                metric_cols[4].metric("R/R", candidate["risk_reward_ratio"])
+                st.write(
+                    f"**Catalyst ({candidate['catalyst_type']}):** {candidate['catalyst_summary']}  \n"
+                    f"**Holding Time:** {candidate['holding_time']}  \n"
+                    f"**Rationale:** {candidate['rationale']}  \n"
+                    f"**Comparison Note:** {candidate['comparison_note']}"
+                )
+                breakdown = candidate.get("score_breakdown", {})
+                st.caption(
+                    "Score breakdown — "
+                    f"Volatility: {breakdown.get('volatility_expansion', 0)} | "
+                    f"Volume: {breakdown.get('volume_anomaly', 0)} | "
+                    f"Catalyst: {breakdown.get('catalyst_strength', 0)} | "
+                    f"Order flow/liquidity: {breakdown.get('order_flow_liquidity', 0)} | "
+                    f"Trend: {breakdown.get('trend_alignment', 0)}"
+                )
+                with st.expander(f"Trace metadata — {candidate['asset']}", expanded=False):
+                    st.json(candidate.get("trace", {}))
+
+            if high_movement_payload.get("warnings"):
+                for warning in high_movement_payload["warnings"]:
+                    st.warning(warning)
+
+            with st.expander("Watchlist filters & trace", expanded=False):
+                st.json(
+                    {
+                        "filters": high_movement_payload.get("filters", {}),
+                        "trace_metadata": high_movement_payload.get("trace_metadata", {}),
+                    }
+                )
+    else:
+        st.error("Historical data unavailable — cannot compute the high-movement watchlist.")
+
+# =========================================================
+# TAB 9: TRADE TRAP CHECKER
 # =========================================================
 
 with tab_trap:
