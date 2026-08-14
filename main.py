@@ -238,6 +238,47 @@ def setup_quality_grade(confidence, cloud_confidence, rr_ratio, net_edge_bps):
     return "C"
 
 
+def in_no_trade_window(ts):
+    t = ts.time()
+    for start, end, label in NO_TRADE_WINDOWS:
+        if start <= t < end:
+            return True, label
+    return False, ""
+
+
+def mtf_cheatcode_alignment(intraday_close, daily_close):
+    intraday_cloud = compute_ripster_cloud(intraday_close)
+    daily_cloud = compute_ripster_cloud(daily_close)
+    intraday_state = classify_cloud_state(intraday_close, intraday_cloud)
+    daily_state = classify_cloud_state(daily_close, daily_cloud)
+    intraday_bias = intraday_state in {"bullish trend", "transition"}
+    daily_bias = daily_state in {"bullish trend", "transition"}
+    weekly_bias = bool(daily_close.tail(5).mean() > daily_close.tail(20).mean()) if len(daily_close) >= 20 else True
+    aligned = intraday_bias and daily_bias and weekly_bias
+    score = 100 if aligned else (65 if intraday_bias and daily_bias else 35)
+    return {
+        "aligned": aligned,
+        "score": score,
+        "intraday_state": intraday_state,
+        "daily_state": daily_state,
+    }
+
+
+def evaluate_breakout_confirmation(close, high, volume):
+    if len(close) < 4:
+        return {"one_candle_confirmation": False, "failed_breakout": False}
+    rolling_high = high.rolling(20).max().shift(1)
+    breakout_now = bool(close.iloc[-2] > rolling_high.iloc[-2]) if not np.isnan(rolling_high.iloc[-2]) else False
+    one_candle_confirmation = breakout_now and close.iloc[-1] > close.iloc[-2]
+    vol_baseline = float(volume.tail(30).mean()) if len(volume) else 0.0
+    vol_ok = float(volume.iloc[-1]) >= vol_baseline
+    failed_breakout = breakout_now and (close.iloc[-1] < close.iloc[-2] or not vol_ok)
+    return {
+        "one_candle_confirmation": one_candle_confirmation and vol_ok,
+        "failed_breakout": failed_breakout,
+    }
+
+
 def sanitize_universe(tickers):
     cleaned = []
     invalid = []
@@ -432,6 +473,15 @@ def run_walk_forward_validation(df):
     atr20 = tr.rolling(20).mean()
     atr_pct = (atr5 / close * 100).fillna(0)
     vol_ratio = (atr5 / (atr20 + 1e-9)).fillna(1.0)
+    cloud = compute_ripster_cloud(close)
+    cloud_state = pd.Series(index=close.index, dtype=object)
+    for i in range(len(close)):
+        sub_close = close.iloc[: i + 1]
+        sub_cloud = {k: v.iloc[: i + 1] for k, v in cloud.items()}
+        cloud_state.iloc[i] = classify_cloud_state(sub_close, sub_cloud)
+    cloud_aligned = cloud_state.eq("bullish trend")
+    volume_confirmation = (df["Volume"] / (df["Volume"].rolling(20).mean() + 1e-9)) > 1.05
+    time_window_proxy = atr_pct <= atr_pct.rolling(30).quantile(0.85).fillna(atr_pct.max())
 
     feat = pd.DataFrame(
         {
@@ -440,6 +490,9 @@ def run_walk_forward_validation(df):
             "vol": (1.2 - vol_ratio).fillna(0),
             "ret_fwd": ret_fwd,
             "atr_pct": atr_pct,
+            "cloud_ok": cloud_aligned.fillna(False),
+            "volume_ok": volume_confirmation.fillna(False),
+            "time_ok": time_window_proxy.fillna(False),
         }
     ).dropna()
     if len(feat) < 140:
@@ -457,7 +510,9 @@ def run_walk_forward_validation(df):
 
     oos_returns = []
     oos_regimes = []
-    oos_ablation = {"no_trend": [], "no_mom": [], "no_vol": []}
+    oos_ablation = {"no_cloud_filter": [], "no_volume_confirmation": [], "no_time_window_filter": []}
+    aligned_returns = []
+    non_aligned_returns = []
 
     for start in range(0, len(feat) - train_size - test_size + 1, test_size):
         train = feat.iloc[start:start + train_size]
@@ -474,8 +529,10 @@ def run_walk_forward_validation(df):
                 best_w = w
 
         score = test["trend"] * best_w[0] + test["mom"] * best_w[1] + test["vol"] * best_w[2]
-        take = score > 0.15
+        take = (score > 0.15) & test["cloud_ok"] & test["volume_ok"] & test["time_ok"]
         oos_returns.extend(list(test.loc[take, "ret_fwd"].dropna()))
+        aligned_returns.extend(list(test.loc[take & test["cloud_ok"], "ret_fwd"].dropna()))
+        non_aligned_returns.extend(list(test.loc[(score > 0.15) & (~test["cloud_ok"]), "ret_fwd"].dropna()))
 
         q1, q2, q3 = train["atr_pct"].quantile([0.25, 0.5, 0.75]).tolist()
         for i in test.index[take]:
@@ -489,12 +546,12 @@ def run_walk_forward_validation(df):
             else:
                 oos_regimes.append(("shock", test.loc[i, "ret_fwd"]))
 
-        no_trend = test["mom"] * best_w[1] + test["vol"] * best_w[2]
-        no_mom = test["trend"] * best_w[0] + test["vol"] * best_w[2]
-        no_vol = test["trend"] * best_w[0] + test["mom"] * best_w[1]
-        oos_ablation["no_trend"].extend(list(test.loc[no_trend > 0.15, "ret_fwd"].dropna()))
-        oos_ablation["no_mom"].extend(list(test.loc[no_mom > 0.15, "ret_fwd"].dropna()))
-        oos_ablation["no_vol"].extend(list(test.loc[no_vol > 0.15, "ret_fwd"].dropna()))
+        no_cloud = (score > 0.15) & test["volume_ok"] & test["time_ok"]
+        no_volume = (score > 0.15) & test["cloud_ok"] & test["time_ok"]
+        no_time = (score > 0.15) & test["cloud_ok"] & test["volume_ok"]
+        oos_ablation["no_cloud_filter"].extend(list(test.loc[no_cloud, "ret_fwd"].dropna()))
+        oos_ablation["no_volume_confirmation"].extend(list(test.loc[no_volume, "ret_fwd"].dropna()))
+        oos_ablation["no_time_window_filter"].extend(list(test.loc[no_time, "ret_fwd"].dropna()))
 
     overall = walk_forward_metrics(oos_returns)
     regime_rows = []
@@ -522,12 +579,33 @@ def run_walk_forward_validation(df):
                 "Delta vs Base (pp)": round(m["expectancy_pct"] - base_exp, 3),
             }
         )
+    cloud_alignment_df = pd.DataFrame(
+        [
+            {"Subset": "Cloud Aligned", **walk_forward_metrics(aligned_returns)},
+            {"Subset": "Cloud Non-Aligned", **walk_forward_metrics(non_aligned_returns)},
+        ]
+    )
+    if not cloud_alignment_df.empty:
+        cloud_alignment_df["Expectancy Lift (pp)"] = cloud_alignment_df["expectancy_pct"] - float(
+            cloud_alignment_df.loc[cloud_alignment_df["Subset"] == "Cloud Non-Aligned", "expectancy_pct"].iloc[0]
+            if (cloud_alignment_df["Subset"] == "Cloud Non-Aligned").any()
+            else 0.0
+        )
+        cloud_alignment_df = cloud_alignment_df.rename(
+            columns={
+                "trades": "Trades",
+                "win_rate": "Win Rate (%)",
+                "expectancy_pct": "Expectancy (%)",
+                "profit_factor": "Profit Factor",
+            }
+        )
 
     return {
         "status": "ok",
         "overall": overall,
         "regime_df": pd.DataFrame(regime_rows),
         "ablation_df": pd.DataFrame(ablation_rows),
+        "cloud_alignment_df": cloud_alignment_df,
     }
 
 
@@ -1267,15 +1345,26 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
         "trigger_threshold_pct": params["base_trigger"],
         "momentum_alignment": False,
         "trend_filter_pass": False,
+        "cloud_state": "compression/chop",
+        "cloud_confidence": 0.0,
+        "mtf_cheatcode_pass": False,
+        "one_candle_confirmation": False,
+        "failed_breakout": False,
         "regime": params["regime"],
         "confidence_score": 0.0,
         "expected_move_pct": 0.0,
         "stop_loss_pct": 0.0,
         "target_pct": 0.0,
+        "reward_to_risk": 0.0,
         "trailing_stop_pct": 0.0,
         "max_hold_bars": 0,
         "total_cost_bps": 0.0,
         "net_edge_bps": -999.0,
+        "friction_margin_bps": EDGE_FRICTION_MARGIN_BY_REGIME.get(params["regime"], 10.0),
+        "volume_confirmation_pass": False,
+        "invalidation_trigger": "N/A",
+        "setup_grade": "C",
+        "decision_tags": "",
         "do_not_trade": True,
         "do_not_trade_reason": "Missing intraday or daily data",
     }
@@ -1296,6 +1385,11 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
     high = intraday_df["High"]
     low = intraday_df["Low"]
     volume = intraday_df["Volume"]
+    cloud = compute_ripster_cloud(close)
+    cloud_state = classify_cloud_state(close, cloud)
+    cloud_metrics = cloud_quality_metrics(close, cloud)
+    cloud_confidence = cloud_confidence_score(cloud_state, cloud_metrics)
+    mtf = mtf_cheatcode_alignment(close, daily_df["Close"])
 
     ret_5m = ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100) if len(close) >= 2 else 0.0
     ret_15m = ((close.iloc[-1] - close.iloc[-4]) / close.iloc[-4] * 100) if len(close) >= 4 else 0.0
@@ -1317,6 +1411,11 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
     vwap = float((close * volume).cumsum().iloc[-1] / (volume.cumsum().iloc[-1] + 1e-9))
     daily_sma20 = float(daily_df["Close"].rolling(20).mean().iloc[-1]) if len(daily_df) >= 20 else float(daily_df["Close"].iloc[-1])
     trend_filter_pass = bool(last_price > vwap and daily_df["Close"].iloc[-1] > daily_sma20)
+    volume_confirmation_pass = bool(vol_accel >= (1.05 if params["regime"] in {"calm", "elevated"} else 1.15))
+    breakout_flags = evaluate_breakout_confirmation(close, high, volume)
+    one_candle_confirmation = breakout_flags["one_candle_confirmation"]
+    failed_breakout = breakout_flags["failed_breakout"]
+    in_window, window_reason = in_no_trade_window(intraday_df.index[-1])
 
     trigger_threshold = max(
         params["base_trigger"],
@@ -1339,26 +1438,14 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
             (abs(distance_pct) / (trigger_threshold + 1e-9)) * 35
             + (15 if momentum_alignment else 0)
             + (15 if trend_filter_pass else 0)
+            + (18 if mtf["aligned"] else 0)
             + np.interp(vol_accel, [0.5, 1.0, 2.0], [5, 12, 18])
+            + np.interp(cloud_confidence, [20, 60, 90], [0, 8, 18])
             - (12 if vol_spike else 0)
             - (10 if low_volume else 0),
             0,
             100,
         )
-    )
-
-    buy_trigger = bool(
-        distance_pct >= trigger_threshold
-        and momentum_alignment
-        and trend_filter_pass
-        and confidence >= params["min_conf"]
-        and not vol_spike
-        and not low_volume
-    )
-    sell_trigger = bool(
-        distance_pct <= -0.6 * trigger_threshold
-        or (last_price < vwap and ret_5m < 0)
-        or confidence < (params["min_conf"] - 10)
     )
 
     slippage_bps = 8.0 if params["regime"] in {"stress", "shock"} else 5.0
@@ -1367,10 +1454,17 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
     total_cost_bps = slippage_bps + spread_bps + commission_bps
     expected_move_pct = max(trigger_threshold, atr_pct * 1.2)
     net_edge_bps = expected_move_pct * 100 - total_cost_bps
+    friction_margin_bps = EDGE_FRICTION_MARGIN_BY_REGIME.get(params["regime"], 10.0)
     stop_loss_pct = max(trigger_threshold * 0.8, atr_pct * 0.9, 0.5)
     target_pct = max(trigger_threshold * 1.5, atr_pct * 1.3, 0.8)
+    reward_to_risk = target_pct / (stop_loss_pct + 1e-9)
+    min_rr = MIN_RR_BY_REGIME.get(params["regime"], 1.6)
     trailing_stop_pct = max(stop_loss_pct * 0.7, 0.4)
     max_hold_bars = 18 if params["regime"] in {"stress", "shock"} else 30
+    stop_valid = bool(stop_loss_pct >= max(atr_pct * 0.8, 0.5))
+    cloud_alignment = cloud_state == "bullish trend" and cloud_confidence >= 55
+    edge_gt_friction = net_edge_bps > friction_margin_bps
+    high_conviction_exception = confidence >= 85 and cloud_confidence >= 70 and mtf["aligned"]
 
     reasons = []
     if confidence < params["min_conf"]:
@@ -1379,11 +1473,63 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
         reasons.append("Low intraday liquidity")
     if vol_spike:
         reasons.append("Volatility spike")
+    if not cloud_alignment:
+        reasons.append("Cloud misalignment")
+    if not mtf["aligned"]:
+        reasons.append("MTF cheatcode misalignment")
+    if not volume_confirmation_pass:
+        reasons.append("No volume confirmation")
+    if not one_candle_confirmation:
+        reasons.append("No one-candle confirmation")
+    if failed_breakout:
+        reasons.append("Failed breakout invalidation")
+    if not stop_valid:
+        reasons.append("Stop invalid vs invalidation zone")
+    if reward_to_risk < min_rr:
+        reasons.append(f"R/R below regime threshold ({min_rr:.1f})")
+    if not edge_gt_friction:
+        reasons.append("Edge does not clear friction margin")
+    if in_window and not high_conviction_exception:
+        reasons.append(window_reason)
     if net_edge_bps <= 0:
         reasons.append("Costs exceed expected edge")
 
+    buy_trigger = bool(
+        distance_pct >= trigger_threshold
+        and momentum_alignment
+        and trend_filter_pass
+        and cloud_alignment
+        and mtf["aligned"]
+        and one_candle_confirmation
+        and volume_confirmation_pass
+        and not failed_breakout
+        and confidence >= params["min_conf"]
+        and reward_to_risk >= min_rr
+        and edge_gt_friction
+        and stop_valid
+        and (not in_window or high_conviction_exception)
+        and not vol_spike
+        and not low_volume
+    )
+    sell_trigger = bool(
+        failed_breakout
+        or distance_pct <= -0.6 * trigger_threshold
+        or (last_price < vwap and ret_5m < 0)
+        or confidence < (params["min_conf"] - 10)
+    )
     do_not_trade = len(reasons) > 0
     exit_warning = sell_trigger or do_not_trade
+    invalidation_trigger = "Failed breakout" if failed_breakout else ("VWAP breakdown" if last_price < vwap else "Trend failure")
+    setup_grade = setup_quality_grade(confidence, cloud_confidence, reward_to_risk, net_edge_bps)
+    decision_tags = ",".join(
+        [
+            f"setup:breakout-continuation",
+            f"regime:{params['regime']}",
+            f"cloud:{cloud_state}",
+            f"mtf:{'pass' if mtf['aligned'] else 'fail'}",
+            f"entry:{'allowed' if buy_trigger and not do_not_trade else 'blocked'}",
+        ]
+    )
 
     return {
         "prev_close": round(float(prev_close), 2),
@@ -1396,11 +1542,25 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
         "trigger_threshold_pct": round(trigger_threshold, 2),
         "momentum_alignment": momentum_alignment,
         "trend_filter_pass": trend_filter_pass,
+        "cloud_state": cloud_state,
+        "cloud_confidence": round(cloud_confidence, 1),
+        "cloud_separation_pct": round(cloud_metrics["separation_pct"], 3),
+        "cloud_slope_strength_pct": round(cloud_metrics["slope_strength_pct"], 3),
+        "cloud_expansion_ratio": round(cloud_metrics["expansion_ratio"], 3),
+        "mtf_cheatcode_pass": mtf["aligned"],
+        "mtf_cheatcode_score": mtf["score"],
+        "mtf_intraday_state": mtf["intraday_state"],
+        "mtf_daily_state": mtf["daily_state"],
+        "one_candle_confirmation": one_candle_confirmation,
+        "failed_breakout": failed_breakout,
+        "volume_confirmation_pass": volume_confirmation_pass,
         "regime": params["regime"],
         "confidence_score": round(confidence, 1),
         "expected_move_pct": round(expected_move_pct, 2),
+        "atr_context_pct": round(atr_pct, 2),
         "stop_loss_pct": round(stop_loss_pct, 2),
         "target_pct": round(target_pct, 2),
+        "reward_to_risk": round(reward_to_risk, 2),
         "trailing_stop_pct": round(trailing_stop_pct, 2),
         "max_hold_bars": int(max_hold_bars),
         "slippage_bps": round(slippage_bps, 1),
@@ -1408,6 +1568,10 @@ def compute_intraday_trade_plan(intraday_df, daily_df, market_shock=50):
         "commission_bps": round(commission_bps, 1),
         "total_cost_bps": round(total_cost_bps, 1),
         "net_edge_bps": round(net_edge_bps, 1),
+        "friction_margin_bps": round(friction_margin_bps, 1),
+        "invalidation_trigger": invalidation_trigger,
+        "setup_grade": setup_grade,
+        "decision_tags": decision_tags,
         "do_not_trade": do_not_trade,
         "do_not_trade_reason": ", ".join(reasons) if reasons else "",
     }
@@ -1427,6 +1591,16 @@ def build_ai_stock_selection_table(
     rows = []
     diagnostics = []
     audit_rows = []
+    regime = market_regime_from_shock(market_shock)
+    account_equity = 100000.0
+    risk_per_trade = 0.01
+    max_positions = 5
+    max_daily_loss_pct = 2.0
+    daily_risk_budget = account_equity * (max_daily_loss_pct / 100)
+    strategy_kill_switch = False
+    kill_switch_reason = ""
+    projected_daily_risk_used = 0.0
+    consecutive_loss_proxy = 0
     universe_clean, invalid_tickers, duplicate_tickers = sanitize_universe(universe)
 
     available = df_history.columns.get_level_values(0).unique()
@@ -1484,18 +1658,56 @@ def build_ai_stock_selection_table(
                 diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": f"Excessive beta exposure ({beta:.2f})"})
                 continue
 
+            if intraday_plan["setup_grade"] == "C" or intraday_plan["failed_breakout"]:
+                consecutive_loss_proxy += 1
+            else:
+                consecutive_loss_proxy = 0
+            if consecutive_loss_proxy >= 3:
+                strategy_kill_switch = True
+                kill_switch_reason = "Kill-switch: consecutive failed/low-quality setups"
+
+            projected_risk = account_equity * risk_per_trade
+            if projected_daily_risk_used + projected_risk > daily_risk_budget:
+                strategy_kill_switch = True
+                kill_switch_reason = "Kill-switch: daily risk budget exhausted"
+
+            if strategy_kill_switch:
+                diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": kill_switch_reason})
+                audit_rows.append(
+                    {
+                        "Ticker": ticker,
+                        "Decision": "Rejected",
+                        "Setup Type": "breakout-continuation",
+                        "Regime": intraday_plan["regime"],
+                        "Reason to Enter": "N/A",
+                        "Reason to Avoid": kill_switch_reason,
+                        "Invalidation Trigger": intraday_plan["invalidation_trigger"],
+                        "Decision Tags": intraday_plan["decision_tags"],
+                        "Setup Grade": intraday_plan["setup_grade"],
+                    }
+                )
+                continue
+
             if intraday_plan["do_not_trade"]:
                 diagnostics.append({"Ticker": ticker, "Status": "Rejected", "Reason": intraday_plan["do_not_trade_reason"] or "Do-not-trade rule"})
                 audit_rows.append(
                     {
                         "Ticker": ticker,
                         "Decision": "Rejected",
+                        "Setup Type": "breakout-continuation",
+                        "Regime": intraday_plan["regime"],
+                        "Reason to Enter": "N/A",
+                        "Reason to Avoid": intraday_plan["do_not_trade_reason"] or "Do-not-trade rule",
+                        "Invalidation Trigger": intraday_plan["invalidation_trigger"],
+                        "Decision Tags": intraday_plan["decision_tags"],
+                        "Setup Grade": intraday_plan["setup_grade"],
                         "Confidence": intraday_plan["confidence_score"],
                         "Reason": intraday_plan["do_not_trade_reason"] or "Do-not-trade rule",
                         "Shock Score": shock["shock_score"],
                     }
                 )
                 continue
+            projected_daily_risk_used += projected_risk
 
             features = {
                 "f_intraday": intraday_plan["momentum_score"],
@@ -1504,6 +1716,7 @@ def build_ai_stock_selection_table(
                 "f_mom1d": np.interp(st_mom["1D"], [-6, 0, 6], [20, 55, 90]),
                 "f_mom3d": np.interp(st_mom["3D"], [-10, 0, 10], [20, 55, 90]),
                 "f_trend": 85 if structure in {"Short-Term Breakout 🚀", "Healthy Uptrend 📈"} else 45,
+                "f_cloud": intraday_plan["cloud_confidence"],
             }
 
             rows.append(
@@ -1522,15 +1735,31 @@ def build_ai_stock_selection_table(
                     "Sell Trigger": intraday_plan["sell_trigger"],
                     "Momentum Alignment": intraday_plan["momentum_alignment"],
                     "Trend Filter Pass": intraday_plan["trend_filter_pass"],
+                    "Cloud State": intraday_plan["cloud_state"],
+                    "Cloud Confidence": intraday_plan["cloud_confidence"],
+                    "Cloud Separation (%)": intraday_plan["cloud_separation_pct"],
+                    "Cloud Slope Strength (%)": intraday_plan["cloud_slope_strength_pct"],
+                    "Cloud Expansion Ratio": intraday_plan["cloud_expansion_ratio"],
+                    "MTF Cheatcode Pass": intraday_plan["mtf_cheatcode_pass"],
+                    "MTF Cheatcode Score": intraday_plan["mtf_cheatcode_score"],
+                    "Volume Confirmation": intraday_plan["volume_confirmation_pass"],
+                    "One-Candle Confirmation": intraday_plan["one_candle_confirmation"],
+                    "Failed Breakout": intraday_plan["failed_breakout"],
                     "Intraday Momentum Score": intraday_plan["momentum_score"],
                     "Confidence Score": intraday_plan["confidence_score"],
                     "Expected Move (%)": intraday_plan["expected_move_pct"],
+                    "ATR Context (%)": intraday_plan["atr_context_pct"],
                     "Stop Loss (%)": intraday_plan["stop_loss_pct"],
                     "Target (%)": intraday_plan["target_pct"],
+                    "Reward/Risk": intraday_plan["reward_to_risk"],
                     "Trailing Stop (%)": intraday_plan["trailing_stop_pct"],
                     "Max Hold (5m bars)": intraday_plan["max_hold_bars"],
                     "Total Costs (bps)": intraday_plan["total_cost_bps"],
                     "Net Edge (bps)": intraday_plan["net_edge_bps"],
+                    "Friction Margin (bps)": intraday_plan["friction_margin_bps"],
+                    "Invalidation Trigger": intraday_plan["invalidation_trigger"],
+                    "Setup Grade": intraday_plan["setup_grade"],
+                    "Decision Tags": intraday_plan["decision_tags"],
                     "Regime": intraday_plan["regime"],
                     "Avg 20D $Vol": round(avg_dollar_volume, 0),
                     "Data Stale (min)": dq["stale_minutes"],
@@ -1545,6 +1774,7 @@ def build_ai_stock_selection_table(
                     "_f_mom1d": features["f_mom1d"],
                     "_f_mom3d": features["f_mom3d"],
                     "_f_trend": features["f_trend"],
+                    "_f_cloud": features["f_cloud"],
                 }
             )
 
@@ -1552,7 +1782,15 @@ def build_ai_stock_selection_table(
                 {
                     "Ticker": ticker,
                     "Decision": "Accepted",
+                    "Setup Type": "breakout-continuation",
+                    "Regime": intraday_plan["regime"],
+                    "Reason to Enter": "Cloud aligned + MTF pass + volume and one-candle confirmation",
+                    "Reason to Avoid": "",
+                    "Invalidation Trigger": intraday_plan["invalidation_trigger"],
+                    "Decision Tags": intraday_plan["decision_tags"],
+                    "Setup Grade": intraday_plan["setup_grade"],
                     "Confidence": intraday_plan["confidence_score"],
+                    "Cloud Confidence": intraday_plan["cloud_confidence"],
                     "Shock Score": shock["shock_score"],
                     "Net Edge (bps)": intraday_plan["net_edge_bps"],
                     "Reason": "Passed all filters",
@@ -1571,7 +1809,7 @@ def build_ai_stock_selection_table(
         }
 
     score_df = pd.DataFrame(rows)
-    score_cols = ["_f_intraday", "_f_sent", "_f_shock", "_f_mom1d", "_f_mom3d", "_f_trend"]
+    score_cols = ["_f_intraday", "_f_sent", "_f_shock", "_f_mom1d", "_f_mom3d", "_f_trend", "_f_cloud"]
     for c in score_cols:
         mu = score_df[c].mean()
         sd = score_df[c].std()
@@ -1580,9 +1818,9 @@ def build_ai_stock_selection_table(
     # Regime-aware calibrated blend on normalized cross-sectional features.
     params = get_regime_params(market_shock)
     if params["regime"] in {"stress", "shock"}:
-        w = {"_f_intraday": 0.25, "_f_sent": 0.10, "_f_shock": 0.25, "_f_mom1d": 0.10, "_f_mom3d": 0.10, "_f_trend": 0.20}
+        w = {"_f_intraday": 0.22, "_f_sent": 0.08, "_f_shock": 0.22, "_f_mom1d": 0.08, "_f_mom3d": 0.08, "_f_trend": 0.14, "_f_cloud": 0.18}
     else:
-        w = {"_f_intraday": 0.30, "_f_sent": 0.15, "_f_shock": 0.15, "_f_mom1d": 0.15, "_f_mom3d": 0.10, "_f_trend": 0.15}
+        w = {"_f_intraday": 0.24, "_f_sent": 0.12, "_f_shock": 0.12, "_f_mom1d": 0.12, "_f_mom3d": 0.09, "_f_trend": 0.14, "_f_cloud": 0.17}
 
     score_df["AI Score"] = (
         score_df["z__f_intraday"] * w["_f_intraday"]
@@ -1591,6 +1829,7 @@ def build_ai_stock_selection_table(
         + score_df["z__f_mom1d"] * w["_f_mom1d"]
         + score_df["z__f_mom3d"] * w["_f_mom3d"]
         + score_df["z__f_trend"] * w["_f_trend"]
+        + score_df["z__f_cloud"] * w["_f_cloud"]
     )
     sc_min = float(score_df["AI Score"].min())
     sc_max = float(score_df["AI Score"].max())
@@ -1610,15 +1849,57 @@ def build_ai_stock_selection_table(
             "clean_count": len(universe_clean),
         }
 
-    account_equity = 100000.0
-    risk_per_trade = 0.01
-    max_positions = 5
-    max_daily_loss_pct = 2.0
     risk_budget = account_equity * risk_per_trade
-    score_df["Stop Distance (%)"] = np.maximum(score_df["Vol-Adj Trigger (%)"] * 0.8, 0.5)
+    score_df["Stop Distance (%)"] = np.maximum(score_df["Stop Loss (%)"], score_df["ATR Context (%)"] * 0.85)
     score_df["Position Size ($)"] = (risk_budget / (score_df["Stop Distance (%)"] / 100)).clip(upper=account_equity / max_positions)
+    score_df["Risk per Trade ($)"] = (score_df["Position Size ($)"] * score_df["Stop Distance (%)"] / 100).round(2)
+    score_df["Beta Cluster"] = np.where(
+        score_df["Market Beta (63D)"].fillna(0) >= 1.2,
+        "High Beta",
+        np.where(score_df["Market Beta (63D)"].fillna(0) <= 0.8, "Defensive", "Core"),
+    )
+    score_df["Sector Proxy"] = score_df["Ticker"].str[0]
+    score_df = score_df.sort_values(by="AI Score", ascending=False).reset_index(drop=True)
+    selected_idx = []
+    cluster_counts = {}
+    sector_counts = {}
+    cluster_cap = 2
+    sector_cap = 2
+    for idx, r in score_df.iterrows():
+        cluster = r["Beta Cluster"]
+        sector = r["Sector Proxy"]
+        if cluster_counts.get(cluster, 0) >= cluster_cap:
+            diagnostics.append({"Ticker": r["Ticker"], "Status": "Rejected", "Reason": f"Correlated exposure cap reached for {cluster}"})
+            continue
+        if sector_counts.get(sector, 0) >= sector_cap:
+            diagnostics.append({"Ticker": r["Ticker"], "Status": "Rejected", "Reason": f"Sector proxy cap reached for {sector}"})
+            continue
+        selected_idx.append(idx)
+        cluster_counts[cluster] = cluster_counts.get(cluster, 0) + 1
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        if len(selected_idx) >= max_positions:
+            break
+    score_df = score_df.loc[selected_idx].copy()
+    if score_df.empty:
+        diagnostics.append({"Ticker": "*", "Status": "Rejected", "Reason": "No candidates left after exposure caps."})
+        return pd.DataFrame(), pd.DataFrame(diagnostics), pd.DataFrame(audit_rows), {
+            "invalid_tickers": invalid_tickers,
+            "duplicate_tickers": duplicate_tickers,
+            "input_count": len(universe or []),
+            "clean_count": len(universe_clean),
+            "confidence_threshold": min_conf,
+        }
+
+    compliance_cols = ["MTF Cheatcode Pass", "Volume Confirmation", "One-Candle Confirmation", "Trend Filter Pass"]
+    checklist_hits = score_df[compliance_cols].fillna(False).all(axis=1).sum()
+    compliance_pct = float(checklist_hits / max(len(score_df), 1) * 100)
+    exception_pct = 100 - compliance_pct
     score_df["Daily Loss Cap (%)"] = max_daily_loss_pct
     score_df["Max Concurrent Positions"] = max_positions
+    score_df["Daily Risk Budget ($)"] = round(daily_risk_budget, 2)
+    score_df["Projected Risk Used ($)"] = round(float(score_df["Risk per Trade ($)"].sum()), 2)
+    score_df["Compliance Pass (%)"] = round(compliance_pct, 1)
+    score_df["Exception Rate (%)"] = round(exception_pct, 1)
 
     drop_cols = [c for c in score_df.columns if c.startswith("_") or c.startswith("z__")]
     score_df = score_df.drop(columns=drop_cols).sort_values(by="AI Score", ascending=False).reset_index(drop=True)
@@ -1629,6 +1910,13 @@ def build_ai_stock_selection_table(
         "input_count": len(universe or []),
         "clean_count": len(universe_clean),
         "confidence_threshold": min_conf,
+        "compliance_pct": round(compliance_pct, 1),
+        "exception_pct": round(exception_pct, 1),
+        "strategy_kill_switch": strategy_kill_switch,
+        "kill_switch_reason": kill_switch_reason,
+        "projected_daily_risk_used": round(projected_daily_risk_used, 2),
+        "daily_risk_budget": round(daily_risk_budget, 2),
+        "regime": regime,
     }
 
 
@@ -2054,6 +2342,11 @@ with tab_sentiment:
                         st.markdown("#### OOS Performance by Regime")
                         st.dataframe(regime_df, use_container_width=True, hide_index=True)
 
+                    cloud_alignment_df = wf.get("cloud_alignment_df", pd.DataFrame())
+                    if not cloud_alignment_df.empty:
+                        st.markdown("#### Cloud-Aligned vs Non-Aligned (OOS)")
+                        st.dataframe(cloud_alignment_df, use_container_width=True, hide_index=True)
+
                     ablation_df = wf.get("ablation_df", pd.DataFrame())
                     if not ablation_df.empty:
                         st.markdown("#### Feature Ablation (OOS)")
@@ -2140,8 +2433,12 @@ with tab_ai:
         st.caption(
             f"Regime confidence threshold: {ai_meta.get('confidence_threshold', 'N/A')} | "
             f"Input tickers: {ai_meta.get('input_count', 0)} | "
-            f"Valid tickers: {ai_meta.get('clean_count', 0)}"
+            f"Valid tickers: {ai_meta.get('clean_count', 0)} | "
+            f"Checklist compliance: {ai_meta.get('compliance_pct', 0)}% | "
+            f"Exceptions: {ai_meta.get('exception_pct', 0)}%"
         )
+        if ai_meta.get("strategy_kill_switch"):
+            st.error(f"Strategy kill-switch active: {ai_meta.get('kill_switch_reason', 'Risk control')}")
         if not ai_df.empty:
             st.dataframe(ai_df, use_container_width=True, hide_index=True)
         else:
