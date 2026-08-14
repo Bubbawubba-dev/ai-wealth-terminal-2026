@@ -8,6 +8,7 @@ from high_movement import (
     calculate_risk_reward_ratio,
     classify_high_movement_regime,
     compute_high_movement_score,
+    format_hkt_timestamp,
     passes_event_gate,
 )
 
@@ -149,6 +150,33 @@ class HighMovementTests(unittest.TestCase):
         snapshot = copy.deepcopy(candidates)
         build_high_movement_payload(candidates, market_shock=35)
         self.assertEqual(candidates, snapshot)
+
+    def test_format_hkt_timestamp_converts_utc_to_hkt(self):
+        result = format_hkt_timestamp("2026-08-14T00:00:00+00:00")
+        self.assertEqual(result, "2026-08-14 08:00 HKT")
+
+    def test_format_hkt_timestamp_returns_na_for_invalid_input(self):
+        self.assertEqual(format_hkt_timestamp(""), "N/A")
+        self.assertEqual(format_hkt_timestamp("not-a-date"), "N/A")
+
+    def test_reserve_candidates_have_pros_and_cons_populated(self):
+        candidate = make_candidate("AAA", has_trigger=False)
+        payload = build_high_movement_payload([candidate], market_shock=35)
+        reserve = payload["high_movement_top5"][0]
+        self.assertIn("pros", reserve)
+        self.assertIn("cons", reserve)
+        self.assertIsInstance(reserve["pros"], list)
+        self.assertIsInstance(reserve["cons"], list)
+        self.assertTrue(len(reserve["cons"]) > 0, "Reserve candidate must have at least one con")
+
+    def test_fully_qualified_candidate_has_empty_pros_and_cons(self):
+        candidates = [make_candidate("AAA"), make_candidate("BBB"), make_candidate("CCC"),
+                      make_candidate("DDD"), make_candidate("EEE")]
+        payload = build_high_movement_payload(candidates, market_shock=35)
+        qualified = [c for c in payload["high_movement_top5"] if not c["cons"]]
+        self.assertTrue(len(qualified) > 0, "At least one fully-qualified candidate expected")
+        for c in qualified:
+            self.assertEqual(c["cons"], [])
 
 
 if __name__ == "__main__":

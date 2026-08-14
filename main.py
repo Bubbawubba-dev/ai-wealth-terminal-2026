@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import re
 from datetime import datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
-from high_movement import build_candidate_display_context, build_high_movement_payload
+from high_movement import build_candidate_display_context, build_high_movement_payload, format_hkt_timestamp
 
 # =========================================================
 # 1. CONFIGURATION & STYLING
@@ -2071,16 +2071,6 @@ def get_ai_stock_selection_bundle(df_history, universe, fundamental_cache, marke
     return ai_df, ai_diag_df, ai_audit_df, ai_meta
 
 
-def format_hkt_timestamp(iso_ts: str) -> str:
-    """Convert an ISO UTC timestamp string to a Hong Kong time display string."""
-    try:
-        dt = datetime.fromisoformat(iso_ts)
-        hkt = dt.astimezone(ZoneInfo("Asia/Hong_Kong"))
-        return hkt.strftime("%Y-%m-%d %H:%M HKT")
-    except Exception:
-        return "N/A"
-
-
 def build_high_movement_watchlist(
     df_history,
     universe,
@@ -3317,6 +3307,25 @@ with tab_high_movement:
                     f"Order flow/liquidity: {breakdown.get('order_flow_liquidity', 0)} | "
                     f"Trend: {breakdown.get('trend_alignment', 0)}"
                 )
+                pros = candidate.get("pros", [])
+                cons = candidate.get("cons", [])
+                if pros or cons:
+                    with st.expander(f"⚖️ Pros & Cons — {candidate['asset']} (reserve candidate)", expanded=False):
+                        pc_cols = st.columns(2)
+                        with pc_cols[0]:
+                            st.markdown("**✅ Pros**")
+                            if pros:
+                                for pro in pros:
+                                    st.markdown(f"- {pro}")
+                            else:
+                                st.caption("No standout strengths identified.")
+                        with pc_cols[1]:
+                            st.markdown("**⚠️ Cons / caveats**")
+                            if cons:
+                                for con in cons:
+                                    st.markdown(f"- {con}")
+                            else:
+                                st.caption("No filter caveats.")
                 with st.expander(f"Trace metadata — {candidate['asset']}", expanded=False):
                     st.json(candidate.get("trace", {}))
 

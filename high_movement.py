@@ -30,12 +30,59 @@ _STATUS_STYLES = {
     "completed": {"label": "Completed", "bg": "#1d4ed8", "fg": "#dbeafe"},
 }
 
+_RESERVE_REASON_LABELS: dict[str, str] = {
+    "EVENT_GATE_FAILED": "No upcoming catalyst or technical trigger identified",
+    "RR_BELOW_MIN": f"Risk/reward ratio below the {HIGH_MOVEMENT_FILTERS['min_rr']}x minimum",
+    "CORRELATION_CAP": "Highly correlated with already-selected names in the same direction",
+    "LOW_LIQUIDITY": "Liquidity does not meet the required threshold",
+    "HIGH_SPREAD": "Bid-ask spread exceeds the 12 bps cap",
+    "INVALID_DIRECTION": "Expected direction is undefined",
+    "MISSING_STOP_LOSS": "Stop-loss level is not defined",
+}
+
+_PRO_THRESHOLDS: dict[str, tuple[str, float]] = {
+    "volatility_expansion": ("Strong volatility expansion signal", 15.0),
+    "volume_anomaly": ("Elevated volume anomaly detected", 12.0),
+    "catalyst_strength": ("High catalyst strength", 15.0),
+    "order_flow_liquidity": ("Healthy order flow and liquidity", 9.0),
+    "trend_alignment": ("Trend alignment confirmed", 9.0),
+}
+
 
 def _clamp(value: Any, low: float = 0.0, high: float = 100.0) -> float:
     try:
         return max(low, min(float(value), high))
     except (TypeError, ValueError):
         return low
+
+
+def format_hkt_timestamp(iso_ts: str) -> str:
+    """Convert an ISO UTC timestamp string to a Hong Kong time display string."""
+    try:
+        dt = datetime.fromisoformat(iso_ts)
+        hkt = dt.astimezone(ZoneInfo("Asia/Hong_Kong"))
+        return hkt.strftime("%Y-%m-%d %H:%M HKT")
+    except Exception:
+        return "N/A"
+
+
+def _derive_candidate_pros_cons(candidate: dict[str, Any]) -> dict[str, list[str]]:
+    """Return pros and cons lists for a reserve (non-fully-qualifying) candidate."""
+    breakdown = candidate.get("score_breakdown") or {}
+    pros: list[str] = []
+    for factor, (label, threshold) in _PRO_THRESHOLDS.items():
+        if float(breakdown.get(factor, 0.0)) >= threshold:
+            pros.append(label)
+    rr = float(candidate.get("risk_reward_ratio", 0.0))
+    if rr >= 2.5:
+        pros.append(f"Favourable risk/reward ratio ({rr}x)")
+    if int(candidate.get("confidence", 0)) >= 65:
+        pros.append(f"Above-average confidence ({candidate['confidence']}/100)")
+    cons: list[str] = [
+        _RESERVE_REASON_LABELS.get(code, code)
+        for code in candidate.get("reserve_reason_codes", [])
+    ]
+    return {"pros": pros, "cons": cons}
 
 
 def classify_high_movement_regime(market_shock: float) -> dict[str, Any]:
@@ -288,7 +335,13 @@ def build_high_movement_payload(
             "status": candidate.get("status", "waiting"),
             "comparison_note": candidate.get("comparison_note", ""),
             "trace": candidate.get("trace", {}),
+            "pros": [],
+            "cons": [],
         }
+        if candidate.get("reserve_reason_codes"):
+            pc = _derive_candidate_pros_cons(candidate)
+            view["pros"] = pc["pros"]
+            view["cons"] = pc["cons"]
         high_movement_top5.append(view)
 
     return {
