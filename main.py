@@ -953,7 +953,9 @@ def build_ai_stock_selection_table(df_history, universe, fundamental_cache):
 
             daily_tail = df.tail(30)
             shock = compute_ticker_shock(intraday_df, daily_tail)
+			
 			intraday_plan = compute_intraday_trade_plan(intraday_df, daily_tail)
+			
             st_mom = compute_short_term_momentum(df)
             st_levels = compute_short_term_levels(df)
             sig = unified_signal(df)
