@@ -8,6 +8,7 @@ from ripster_cloud import (
     cloud_confidence_score,
     cloud_quality_metrics,
     compute_ripster_cloud,
+    mtf_cloud_alignment,
 )
 
 
@@ -45,6 +46,45 @@ class RipsterCloudTests(unittest.TestCase):
             cloud_quality_metrics(pd.Series(dtype=float), compute_ripster_cloud(pd.Series(dtype=float))),
             {"separation_pct": 0.0, "slope_strength_pct": 0.0, "expansion_ratio": 0.0, "flip_count": 0},
         )
+
+    def test_alignment_and_cheatcode_pass_for_matching_bullish_and_bearish_trends(self):
+        rising = pd.Series(np.linspace(100, 150, 100))
+        falling = pd.Series(np.linspace(150, 100, 100))
+
+        bullish = mtf_cloud_alignment(rising, rising)
+        bearish = mtf_cloud_alignment(falling, falling)
+
+        for result in (bullish, bearish):
+            self.assertEqual(result["alignment_score"], 100)
+            self.assertEqual(result["score"], 100)
+            self.assertTrue(result["aligned"])
+
+    def test_mixed_directions_do_not_count_as_aligned(self):
+        rising = pd.Series(np.linspace(100, 150, 100))
+        falling = pd.Series(np.linspace(150, 100, 100))
+        result = mtf_cloud_alignment(rising, falling)
+
+        self.assertEqual(result["alignment_score"], 0)
+        self.assertEqual(result["score"], 0)
+        self.assertFalse(result["aligned"])
+
+    def test_short_higher_timeframe_history_never_passes_cheatcode(self):
+        rising = pd.Series(np.linspace(100, 150, 100))
+        short_rising = pd.Series(np.linspace(120, 150, 15))
+        result = mtf_cloud_alignment(rising, short_rising)
+
+        self.assertEqual(result["alignment_score"], 100)
+        self.assertEqual(result["score"], 50)
+        self.assertFalse(result["aligned"])
+        self.assertFalse(result["higher_trend_confirmed"])
+
+    def test_flat_clouds_have_no_directional_alignment(self):
+        flat = pd.Series([100.0] * 100)
+        result = mtf_cloud_alignment(flat, flat)
+
+        self.assertEqual(result["alignment_score"], 0)
+        self.assertEqual(result["score"], 0)
+        self.assertFalse(result["aligned"])
 
 
 if __name__ == "__main__":

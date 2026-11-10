@@ -123,3 +123,59 @@ def cloud_confidence_score(cloud_state, cloud_metrics):
     if cloud_metrics["flip_count"] >= 4:
         raw -= 10
     return float(np.clip(raw, 0, 100))
+
+
+def cloud_direction(price, cloud):
+    state = classify_cloud_state(price, cloud)
+    if state == "insufficient data":
+        return None
+
+    fast_mid = cloud["fast_mid"]
+    slow_mid = cloud["slow_mid"]
+    fast_slope = _recent_slope(fast_mid)
+    slow_slope = _recent_slope(slow_mid)
+    if fast_mid.iloc[-1] > slow_mid.iloc[-1] and fast_slope > 0 and slow_slope > 0:
+        return "bullish"
+    if fast_mid.iloc[-1] < slow_mid.iloc[-1] and fast_slope < 0 and slow_slope < 0:
+        return "bearish"
+    return None
+
+
+def mtf_cloud_alignment(lower_tf_close, higher_tf_close):
+    lower_cloud = compute_ripster_cloud(lower_tf_close)
+    higher_cloud = compute_ripster_cloud(higher_tf_close)
+    lower_state = classify_cloud_state(lower_tf_close, lower_cloud)
+    higher_state = classify_cloud_state(higher_tf_close, higher_cloud)
+    lower_direction = cloud_direction(lower_tf_close, lower_cloud)
+    higher_direction = cloud_direction(higher_tf_close, higher_cloud)
+    directions_agree = lower_direction is not None and lower_direction == higher_direction
+    alignment_score = 100 if directions_agree else 0
+
+    higher_values = pd.to_numeric(higher_tf_close, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    trend_confirmed = False
+    if len(higher_values) >= 20 and higher_values.tail(20).notna().all() and directions_agree:
+        short_average = float(higher_values.tail(5).mean())
+        long_average = float(higher_values.tail(20).mean())
+        trend_confirmed = (
+            short_average > long_average
+            if higher_direction == "bullish"
+            else short_average < long_average
+        )
+
+    if not directions_agree:
+        cheatcode_score = 0
+    elif trend_confirmed:
+        cheatcode_score = 100
+    else:
+        cheatcode_score = 50
+
+    return {
+        "aligned": bool(directions_agree and trend_confirmed),
+        "score": cheatcode_score,
+        "alignment_score": alignment_score,
+        "lower_state": lower_state,
+        "higher_state": higher_state,
+        "lower_direction": lower_direction,
+        "higher_direction": higher_direction,
+        "higher_trend_confirmed": trend_confirmed,
+    }

@@ -12,6 +12,7 @@ from ripster_cloud import (
     cloud_confidence_score,
     cloud_quality_metrics,
     compute_ripster_cloud,
+    mtf_cloud_alignment,
 )
 
 # =========================================================
@@ -180,20 +181,11 @@ def in_no_trade_window(ts):
 
 
 def mtf_cheatcode_alignment(intraday_close, daily_close):
-    intraday_cloud = compute_ripster_cloud(intraday_close)
-    daily_cloud = compute_ripster_cloud(daily_close)
-    intraday_state = classify_cloud_state(intraday_close, intraday_cloud)
-    daily_state = classify_cloud_state(daily_close, daily_cloud)
-    intraday_bias = intraday_state in {"bullish trend", "transition"}
-    daily_bias = daily_state in {"bullish trend", "transition"}
-    weekly_bias = bool(daily_close.tail(5).mean() > daily_close.tail(20).mean()) if len(daily_close) >= 20 else True
-    aligned = intraday_bias and daily_bias and weekly_bias
-    score = 100 if aligned else (65 if intraday_bias and daily_bias else 35)
+    result = mtf_cloud_alignment(intraday_close, daily_close)
     return {
-        "aligned": aligned,
-        "score": score,
-        "intraday_state": intraday_state,
-        "daily_state": daily_state,
+        **result,
+        "intraday_state": result["lower_state"],
+        "daily_state": result["higher_state"],
     }
 
 
@@ -223,28 +215,15 @@ def calculate_ripster_sentiment_components(ticker_df, rsi_score, ma_score, vol_s
     higher_tf_confidence = cloud_confidence_score(higher_tf_state, higher_tf_metrics)
     mtf_cheatcode = mtf_cheatcode_alignment(close, higher_tf_close)
 
-    bullish_states = {"bullish trend", "transition"}
-    aligned = cloud_state == "bullish trend" and higher_tf_state == "bullish trend"
-    supportive_alignment = cloud_state in bullish_states and higher_tf_state in bullish_states
-    higher_tf_ma = higher_tf_close.rolling(min(4, len(higher_tf_close))).mean().iloc[-1]
-    higher_tf_trend_up = bool(higher_tf_close.iloc[-1] >= higher_tf_ma) if len(higher_tf_close) else False
-    if aligned and higher_tf_trend_up and mtf_cheatcode["aligned"]:
-        mtf_alignment_score = 100.0
-    elif supportive_alignment and higher_tf_trend_up:
-        mtf_alignment_score = max(82.0, float(mtf_cheatcode["score"]) * 0.9)
-    elif supportive_alignment:
-        mtf_alignment_score = max(68.0, float(mtf_cheatcode["score"]) * 0.8)
-    elif "compression/chop" in {cloud_state, higher_tf_state}:
-        mtf_alignment_score = 38.0
-    else:
-        mtf_alignment_score = 18.0
+    mtf_alignment_score = float(mtf_cheatcode["alignment_score"])
+    higher_tf_trend_confirmed = mtf_cheatcode["higher_trend_confirmed"]
 
     trend_confirmation_score = float(
         np.clip(
             ma_score * 0.55
             + cloud_confidence * 0.25
             + higher_tf_confidence * 0.20
-            + (8 if higher_tf_trend_up else -8),
+            + (8 if higher_tf_trend_confirmed else -8),
             0,
             100,
         )
@@ -2718,17 +2697,16 @@ with tab_sentiment:
                 st.caption(
                     "A cloud is the band between two moving averages. The fast averages react to recent prices; "
                     "the slow averages show the broader direction. Daily and weekly clouds use daily and weekly "
-                    "closing prices. State summarizes price location and whether both averages are rising or falling. "
-                    "Confidence (0–100) reflects cloud spacing, slope, and widening—it is not a probability or a guarantee."
+                    "closing prices. Alignment is 100 when both clouds have the same clear direction, otherwise 0. "
+                    "Cheatcode is 100 when directions agree and the higher-timeframe 5-period average confirms the "
+                    "20-period average, 50 when cloud directions agree but that confirmation is absent, and 0 when "
+                    "they disagree or direction is unclear. PASS requires 100. These are rule-based checks, not "
+                    "probabilities or guarantees."
                 )
-                rip_col1, rip_col2, rip_col3, rip_col4 = st.columns(4)
+                rip_col1, rip_col2 = st.columns(2)
                 with rip_col1:
                     st.metric("Alignment Score", sentiment["metrics"]["ripster_alignment_score"])
                 with rip_col2:
-                    st.metric("Daily Cloud", sentiment["metrics"]["ripster_daily_state"])
-                with rip_col3:
-                    st.metric("Weekly Cloud", sentiment["metrics"]["ripster_weekly_state"])
-                with rip_col4:
                     st.metric(
                         "Cheatcode Score",
                         sentiment["metrics"]["ripster_cheatcode_score"],
@@ -2738,14 +2716,14 @@ with tab_sentiment:
                 ripster_components = pd.DataFrame(
                     [
                         {
-                            "Component": "Daily Cloud Confidence",
-                            "Value": sentiment["metrics"]["ripster_daily_confidence"],
-                            "Meaning": "How clear the recent daily trend looks from the cloud.",
+                            "Component": "Alignment Score",
+                            "Value": sentiment["metrics"]["ripster_alignment_score"],
+                            "Meaning": "100 means daily and weekly cloud directions agree; 0 means they do not or one is unclear.",
                         },
                         {
-                            "Component": "Weekly Cloud Confidence",
-                            "Value": sentiment["metrics"]["ripster_weekly_confidence"],
-                            "Meaning": "How clear the broader weekly trend looks from the cloud.",
+                            "Component": "Cheatcode Score",
+                            "Value": sentiment["metrics"]["ripster_cheatcode_score"],
+                            "Meaning": "100 = matching directions plus higher-timeframe average confirmation; 50 = matching clouds only; 0 = disagreement or unclear direction.",
                         },
                         {
                             "Component": "Weekly Return (%)",
