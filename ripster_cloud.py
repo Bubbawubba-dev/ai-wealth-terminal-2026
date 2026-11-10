@@ -33,13 +33,13 @@ def classify_cloud_state(price, cloud):
 
     latest = {}
     for key in ("fast_upper", "fast_lower", "slow_upper", "slow_lower", "fast_mid", "slow_mid"):
-        values = pd.to_numeric(cloud[key], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-        if values.empty:
+        values = pd.to_numeric(cloud[key], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        if values.empty or not np.isfinite(values.iloc[-1]):
             return "insufficient data"
         latest[key] = float(values.iloc[-1])
 
-    prices = pd.to_numeric(price, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    if prices.empty:
+    prices = pd.to_numeric(price, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    if prices.empty or not np.isfinite(prices.iloc[-1]):
         return "insufficient data"
     px = float(prices.iloc[-1])
     if px <= 0:
@@ -80,8 +80,13 @@ def classify_cloud_state(price, cloud):
 
 
 def cloud_quality_metrics(close, cloud):
-    prices = pd.to_numeric(close, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-    if prices.empty:
+    prices = pd.to_numeric(close, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    if prices.empty or not np.isfinite(prices.iloc[-1]):
+        return {"separation_pct": 0.0, "slope_strength_pct": 0.0, "expansion_ratio": 0.0, "flip_count": 0}
+    if any(
+        values.empty or not np.isfinite(values.iloc[-1])
+        for values in (cloud["fast_mid"], cloud["slow_mid"], cloud["fast_upper"], cloud["fast_lower"], cloud["slow_upper"], cloud["slow_lower"])
+    ):
         return {"separation_pct": 0.0, "slope_strength_pct": 0.0, "expansion_ratio": 0.0, "flip_count": 0}
     px = max(abs(float(prices.iloc[-1])), 1e-9)
     fast_mid = cloud["fast_mid"]
